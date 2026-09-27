@@ -282,6 +282,7 @@ def fetch(url, params=None, timeout: int = TIMEOUT,
     pool kosong). Respons blok terakhir tetap dikembalikan apa adanya
     supaya pemanggil bisa memutuskan fallback browser.
     """
+    _touch_activity()
     mode = (proxy_mode_override or proxy_mode()).lower()
     key = _cache_key(url, params, ajax)
     if not fresh:
@@ -522,6 +523,8 @@ BOOTSTRAP_FILE = Path.home() / ".cache" / "google-scrape-mcp" / "bootstrap_cooki
 BOOTSTRAP_TTL = _env_float("GOOGLE_SCRAPE_COOKIE_TTL", 300.0)
 _BOOTSTRAP: dict = {"ts": 0.0, "cookies": {}}
 _BOOTSTRAP_LOCK = threading.Lock()
+_ACTIVITY_TS = 0.0
+_KEEPER_STARTED = False
 
 
 def _load_bootstrap() -> None:
@@ -566,23 +569,30 @@ def invalidate_bootstrap() -> None:
         pass
 
 
+def bootstrap_left() -> float:
+    with _BOOTSTRAP_LOCK:
+        if not _BOOTSTRAP.get("cookies"):
+            return 0.0
+        return max(0.0, BOOTSTRAP_TTL - (time.time() - float(_BOOTSTRAP.get("ts", 0))))
+
+
 def refresh_bootstrap() -> bool:
     """Warm-up halaman google.com via browser persisten, lalu ambil cookies
-    segar dari konteksnya. Cookies ini membuat raw HTTP /search lolos
-    (temuan riset) — menghemat render penuh per pencarian."""
+    segar dari konteksnya (satu job prioritas tanpa jeda antrean). Cookies
+    ini membuat raw HTTP /search lolos (temuan riset) — menghemat render
+    penuh per pencarian."""
     global _BOOTSTRAP
     try:
-        from .browser import fetch_rendered, get_cookies
+        from .browser import warm_homepage_and_cookies
     except Exception:
         return False
-    res = fetch_rendered("https://www.google.com/", resolve_goto=False,
-                         expect=("",), settle_ms=1500)
-    if res.get("blocked") or res.get("challenge"):
+    res = warm_homepage_and_cookies()
+    if res.get("blocked"):
         note_browser_blocked("warmup_blocked")
         return False
     if res.get("error"):
         return False
-    cookies = get_cookies() or {}
+    cookies = res.get("cookies") or {}
     if not cookies:
         return False
     with _BOOTSTRAP_LOCK:
@@ -593,6 +603,48 @@ def refresh_bootstrap() -> bool:
     except Exception:
         pass
     return True
+
+
+def _touch_activity() -> None:
+    global _ACTIVITY_TS
+    _ACTIVITY_TS = time.time()
+
+
+def _recent_activity(window: float = 900.0) -> bool:
+    return (time.time() - _ACTIVITY_TS) < window
+
+
+def start_bootstrap_keeper() -> None:
+    """Jaga cookie bootstrap tetap segar di background (idle-gated).
+
+    Aktif hanya kalau ada aktivitas tool dalam 15 menit terakhir, jadi
+    server tidak menembak Google 24/7. Matikan: GOOGLE_SCRAPE_KEEPER=0.
+    """
+    global _KEEPER_STARTED
+    if _KEEPER_STARTED:
+        return
+    if os.environ.get("GOOGLE_SCRAPE_KEEPER", "1").strip().lower() in \
+            ("0", "off", "false", "no"):
+        return
+    _KEEPER_STARTED = True
+    threading.Thread(target=_keeper_loop, name="gsmcp-keeper",
+                     daemon=True).start()
+
+
+def _keeper_loop() -> None:
+    while True:
+        time.sleep(40)
+        try:
+            if not _recent_activity():
+                continue
+            if browser_blocked_active():
+                continue
+            if bootstrap_valid() and bootstrap_left() > 90:
+                continue
+            if not refresh_bootstrap():
+                time.sleep(300)  # browser bermasalah: jangan spam
+        except Exception:
+            time.sleep(120)
 
 
 def endpoint_family(url: str) -> str:

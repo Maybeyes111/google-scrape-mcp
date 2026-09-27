@@ -111,6 +111,31 @@ Every search tool accepts `engine`:
 Cookies are cached in `~/.cache/google-scrape-mcp/bootstrap_cookies.json`
 with a 5-minute TTL (`GOOGLE_SCRAPE_COOKIE_TTL`).
 
+## Performance
+
+Measured on a residential/flagged IP (v0.8.0):
+
+| Operation | Before | Now |
+|---|---|---|
+| Web search (end-to-end) | ~1.0s | **0.3–0.7s** |
+| Bootstrap warm-up | 16.4s | **5.7s** |
+| Scholar search | 11.3s | **4.2–4.4s** |
+| AI Mode (full answer) | 11.1s (sometimes truncated) | **~10.8s, complete** |
+| `/goto` link resolution | sequential | **parallel, ~0.5s** |
+
+Speed mechanisms:
+
+- **One priority job** for warm-up + cookie retrieval (no queue gap, no second job).
+- **Adaptive warm skip**: if the browser profile was warmed within
+  `GOOGLE_SCRAPE_WARM_TTL` (default 600s), the homepage visit is skipped.
+- **Content waits instead of fixed sleeps**: `wait_for` selectors for scholar/
+  news/shopping and text-stability polling for AI Mode answers.
+- **Parallel `/goto` resolution** (6 workers, cap 12 links).
+- **Background bootstrap keeper**: while tools are being used (15-minute
+  activity window), cookies are refreshed in the background so searches never
+  pay the warm-up cost. Disable with `GOOGLE_SCRAPE_KEEPER=0`.
+- **Human job gap** reduced to 1.5–3.5s (`GOOGLE_SCRAPE_JOB_GAP=min-max`).
+
 ## Proxy pool
 
 Accepted line formats: `http://host:port`, `https://host:port`,
@@ -153,6 +178,9 @@ python3 -m google_scrape_mcp.curate --limit 100 --workers 8
 | `GOOGLE_SCRAPE_BROWSER_COOLDOWN` | `180` | base browser cooldown after a block (doubles per level) |
 | `GOOGLE_SCRAPE_FORENSICS` | `1` | save blocked-page samples |
 | `GOOGLE_SCRAPE_NO_SELFHEAL` | — | disable automatic `camoufox fetch` when the browser is missing |
+| `GOOGLE_SCRAPE_WARM_TTL` | `600` | skip the browser homepage warm-up if warmed more recently than this (s) |
+| `GOOGLE_SCRAPE_JOB_GAP` | `1.5-3.5` | human-like delay between browser jobs (min-max seconds) |
+| `GOOGLE_SCRAPE_KEEPER` | `1` | background bootstrap keeper (`0` disables) |
 
 ## Research & forensics
 

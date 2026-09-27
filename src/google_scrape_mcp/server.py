@@ -16,6 +16,7 @@ from fastmcp import FastMCP
 
 from .client import (
     BLOCKED_MSG,
+    start_bootstrap_keeper,
     blocked_families,
     bootstrap_cookies,
     bootstrap_info,
@@ -108,13 +109,26 @@ def _call_parser(parse_fn, html: str):
     return parse_fn(html)
 
 
+_WAIT_FOR = {
+    parse_scholar: "div.gs_ri",
+    parse_ai_mode: "div.Rty6Hf",
+    parse_news_live: "div.n0jPhd",
+    parse_shopping: "div.gkQHve",
+}
+_WAIT_TEXT = {
+    parse_ai_mode: "div.Rty6Hf",
+}
+
+
 def _browser_attempt(base: str, params: dict, hl: str, parse_fn,
                      query: str, label: str, proxy,
                      expect: tuple = ("<h3",)) -> dict:
     from .browser import fetch_rendered
     res = fetch_rendered(base, params=params,
                          locale=_LOCALE.get(hl, hl or "en-US"),
-                         proxy=proxy, expect=expect)
+                         proxy=proxy, expect=expect,
+                         wait_for=_WAIT_FOR.get(parse_fn),
+                         wait_text=_WAIT_TEXT.get(parse_fn))
     out = {label: query, "engine": "browser",
            "http_status": res.get("http_status"), "url": res.get("url")}
     if res.get("error"):
@@ -750,7 +764,7 @@ def google_ai_mode(query: str, hl: str = "en", gl: str = "us",
         # kadang jawaban belum termuat saat render pertama — coba sekali lagi
         time.sleep(4)
         retry = _run_search(SEARCH_BASE, dict(params), dict(params), hl, query,
-                            engine, parse_ai_mode, parse_ai_mode,
+                            engine_eff, parse_ai_mode, parse_ai_mode,
                             expect=("Balasan Mode AI", "Rty6Hf"))
         retry["retried"] = True
         return retry
@@ -960,6 +974,7 @@ def google_status() -> dict:
 
 
 def main() -> None:
+    start_bootstrap_keeper()
     mcp.run()
 
 

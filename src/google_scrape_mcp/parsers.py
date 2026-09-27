@@ -133,6 +133,29 @@ def parse_ai_mode(html: str, query: str = ""):
             "results": sources[:10]}
 
 
+def _resolve_many(gotos: list[str], cap: int = 12) -> dict:
+    """Resolve beberapa /goto sekaligus (paralel, ringan) — jalur HTTP
+    fast-path menghasilkan sampai ~10 link per SERP; sekuensial terlalu
+    lambat untuk jalur cepat."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from .client import head_location
+
+    out: dict[str, str | None] = {}
+    targets = list(dict.fromkeys(gotos))[:cap]
+    if not targets:
+        return out
+    with ThreadPoolExecutor(max_workers=min(6, len(targets))) as pool:
+        futures = {pool.submit(head_location, g, 15, True): g
+                   for g in targets}
+        for fut in as_completed(futures):
+            goto = futures[fut]
+            try:
+                out[goto] = fut.result()
+            except Exception:
+                out[goto] = None
+    return out
+
+
 def _extract_serp_result(h3, base: str, resolve_links: bool):
     """Ambil satu hasil dari sebuah h3 SERP — layout-agnostic.
 
@@ -153,17 +176,15 @@ def _extract_serp_result(h3, base: str, resolve_links: bool):
         cite = a.find("cite")
     cite_txt = cite.get_text("", strip=True) if cite else None
     url = None
-    if goto:
-        url = (resolve_goto(goto) or goto) if resolve_links else goto
-    if not url and a is not None:
+    if not goto and a is not None:
         href = a.get("href") or ""
         if href.startswith("/url?"):
             url = clean_google_url(href)
         elif href.startswith("http"):
             url = href
-    if not url:
+    if not url and not goto:
         url = reconstruct_url(cite_txt)
-    if not url:
+    if not url and not goto:
         return None
     if cite_txt and "·" in cite_txt and "http" not in cite_txt and not goto:
         return None  # pseudo-cite (views/time) tanpa anchor nyata
@@ -188,9 +209,12 @@ def _extract_serp_result(h3, base: str, resolve_links: bool):
         site = h3.find_next(sel)
         if site is not None:
             break
-    return {"title": title, "url": url, "cite": cite_txt,
+    item = {"title": title, "url": url or goto, "cite": cite_txt,
             "site": site.get_text(strip=True) if site else "",
             "snippet": snippet[:800]}
+    if goto and not url:
+        item["_goto"] = goto
+    return item
 
 
 def parse_serp_live(html: str, base: str = "https://www.google.com",
@@ -216,6 +240,17 @@ def parse_serp_live(html: str, base: str = "https://www.google.com",
             continue
         seen_urls.add(key)
         results.append(item)
+
+    if resolve_links:
+        pending = [it["_goto"] for it in results if it.get("_goto")]
+        resolved = _resolve_many(pending) if pending else {}
+        for it in results:
+            goto = it.pop("_goto", None)
+            if goto:
+                it["url"] = resolved.get(goto) or goto
+    else:
+        for it in results:
+            it.pop("_goto", None)
     related = []
     for a in soup.find_all("a", href=re.compile(r"/search\?.*q=")):
         txt = a.get_text(" ", strip=True)

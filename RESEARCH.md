@@ -127,6 +127,37 @@ cooldown expires.
 - **Forensics**: block samples + counters exposed via `google_status`.
 - **Probe harness** for continuous measurement.
 
+## 4b. Speed work (v0.8.0)
+
+Measured before → after on the same machine:
+
+| Operation | Before | After |
+|---|---|---|
+| Browser homepage warm-up + cookies | 16.4s | **5.7s** |
+| Web search end-to-end | ~1.0s | **0.34s** |
+| Scholar search | 11.3s | **4.2–4.4s** |
+| AI Mode answer | 11.1s / truncated prefix | **~10.8s / complete (2.4k chars)** |
+| SERP parse + `/goto` resolution | sequential | **parallel, ~0.5s** |
+
+Mechanisms:
+
+1. Warm-up and cookie retrieval merged into **one priority browser job**
+   (previously two jobs, each paying a 2.5–6s human gap).
+2. **Adaptive warm skip** (`GOOGLE_SCRAPE_WARM_TTL=600`): the homepage visit is
+   only done when the profile has not been warmed recently.
+3. **Event waits instead of sleeps**: `wait_for` selectors (scholar `div.gs_ri`,
+   shopping `div.gkQHve`, news `div.n0jPhd`) and text-stability polling for the
+   AI Mode answer (`div.Rty6Hf`).
+4. **Parallel `/goto` resolution** with 6 threads (cap 12 links) — the search
+   URL itself is accurate again instead of an opaque token.
+5. **Background bootstrap keeper**: refreshes cookies while tools are in use
+   (15-minute activity window), so user-facing calls rarely pay 5.7s.
+6. Job gap reduced to 1.5–3.5s (`GOOGLE_SCRAPE_JOB_GAP`).
+
+Bug fixed along the way: the AI Mode retry path used the original `engine`
+(`auto`) instead of the effective one, so a truncated first render was retried
+over HTTP and returned only the question bubble.
+
 ## 5. Open research items
 
 1. **Residential proxy curation**: run `curate` against a good residential

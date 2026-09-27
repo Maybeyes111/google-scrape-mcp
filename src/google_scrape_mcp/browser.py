@@ -32,6 +32,14 @@ BASE = Path.home() / ".cache" / "google-scrape-mcp"
 PROFILE = BASE / "cfx-profile"
 _LAUNCH = dict(headless=True, os="windows", exclude_addons=["ublock-origin"])
 
+WARM_TTL = float(os.environ.get("GOOGLE_SCRAPE_WARM_TTL", "600"))
+try:
+    _gap_lo, _gap_hi = (float(x) for x in
+                        os.environ.get("GOOGLE_SCRAPE_JOB_GAP", "1.5-3.5").split("-"))
+except Exception:
+    _gap_lo, _gap_hi = 1.5, 3.5
+_WARM_LOCK = threading.Lock()
+_WARM_STATE: dict[str, float] = {}
 _SELFHEAL_LOCK = threading.Lock()
 _SELFHEAL_LAST = 0.0
 _SELFHEAL_COOLDOWN = 1800.0
@@ -130,16 +138,29 @@ def _dismiss_consent(pg) -> None:
 
 
 def _humanize(pg) -> None:
-    """Gerakan mouse + scroll kecil supaya jejak interaksinya masuk akal."""
+    """Satu gerakan mouse + scroll kecil — cukup manusiawi, tidak lambat."""
     try:
-        for _ in range(2):
-            pg.mouse.move(random.randint(80, 700), random.randint(80, 500),
-                          steps=random.randint(3, 8))
-            pg.wait_for_timeout(random.randint(120, 380))
-        pg.mouse.wheel(0, random.randint(300, 700))
-        pg.wait_for_timeout(random.randint(250, 600))
+        pg.mouse.move(random.randint(80, 700), random.randint(80, 500),
+                      steps=random.randint(3, 6))
+        pg.wait_for_timeout(random.randint(60, 150))
+        pg.mouse.wheel(0, random.randint(200, 500))
+        pg.wait_for_timeout(random.randint(100, 220))
     except Exception:
         pass
+
+
+def _warm_state_key(profile: Path) -> str:
+    return str(profile)
+
+
+def _mark_warm(key: str) -> None:
+    with _WARM_LOCK:
+        _WARM_STATE[key] = time.time()
+
+
+def _is_warm(key: str) -> bool:
+    with _WARM_LOCK:
+        return (time.time() - _WARM_STATE.get(key, 0.0)) <= WARM_TTL
 
 
 def _settle_content(pg, settle_ms: int, expect: tuple[str, ...],
@@ -181,19 +202,52 @@ def _resolve_goto(pg, final: str) -> dict:
     return resolved
 
 
+def _wait_text_stable(pg, selector: str, max_ms: int = 15000,
+                      min_len: int = 120) -> None:
+    """Tunggu sampai teks elemen berhenti tumbuh (streaming selesai)."""
+    deadline = time.time() + max_ms / 1000.0
+    last = -1
+    stable = 0
+    while time.time() < deadline:
+        try:
+            text = pg.inner_text(selector)
+        except Exception:
+            text = ""
+        length = len(text or "")
+        if length >= min_len and length == last:
+            stable += 1
+            if stable >= 2:
+                return
+        else:
+            stable = 0
+        last = length
+        pg.wait_for_timeout(450)
+
+
 def _render_job(browser, full: str, locale: str, timeout_ms: int,
                 settle_ms: int, warm_url: str, resolve_goto: bool,
-                expect: tuple[str, ...]) -> dict:
+                expect: tuple[str, ...], wait_for: str | None = None,
+                wait_text: str | None = None,
+                do_warm: bool = True) -> dict:
     pg = browser.new_page()
     try:
-        try:
-            pg.goto(warm_url, timeout=timeout_ms, wait_until="domcontentloaded")
-            pg.wait_for_timeout(1500 + random.randint(0, 1500))
-            _dismiss_consent(pg)
-        except Exception:
-            pass
+        if do_warm and warm_url:
+            try:
+                pg.goto(warm_url, timeout=timeout_ms,
+                        wait_until="domcontentloaded")
+                pg.wait_for_timeout(1200 + random.randint(0, 1000))
+                _dismiss_consent(pg)
+            except Exception:
+                pass
         resp = pg.goto(full, timeout=timeout_ms, wait_until="domcontentloaded")
         status = resp.status if resp else None
+        if wait_for:
+            try:
+                pg.wait_for_selector(wait_for, timeout=min(15000, timeout_ms))
+            except Exception:
+                pass
+        if wait_text:
+            _wait_text_stable(pg, wait_text)
         _humanize(pg)
         html, final, js_rounds = _settle_content(pg, settle_ms, expect)
         resolved = _resolve_goto(pg, final) if resolve_goto else {}
@@ -245,16 +299,47 @@ async (args) => {
 """
 
 
-def _trends_job(browser, explore_url: str, hl: str, tz: int,
-                timeout_ms: int) -> dict:
+def _warm_job(browser) -> dict:
+    """Satu job: kunjungi google.com lalu kembalikan cookies konteks.
+
+    Dipakai bootstrap fast-path — menggabungkan warm-up dan pengambilan
+    cookie agar tidak ada dua job + dua jeda antrean.
+    """
     pg = browser.new_page()
     try:
-        try:
-            pg.goto("https://trends.google.com/", timeout=timeout_ms,
-                    wait_until="domcontentloaded")
-            pg.wait_for_timeout(2000)
-        except Exception:
-            pass
+        resp = pg.goto("https://www.google.com/", timeout=30000,
+                       wait_until="domcontentloaded")
+        pg.wait_for_timeout(1200 + random.randint(0, 800))
+        _dismiss_consent(pg)
+        html = pg.content() or ""
+        status = resp.status if resp else None
+    finally:
+        pg.close()
+    cookies = {}
+    try:
+        for cookie in browser.cookies() or []:
+            domain = str(cookie.get("domain") or "")
+            if "google." in domain and cookie.get("name"):
+                cookies.setdefault(str(cookie["name"]),
+                                   str(cookie.get("value") or ""))
+    except Exception:
+        pass
+    blocked = ("/sorry/" in (pg.url if hasattr(pg, "url") else "")
+               or 'id="captcha-form"' in html)
+    return {"cookies": cookies, "blocked": blocked, "http_status": status}
+
+
+def _trends_job(browser, explore_url: str, hl: str, tz: int,
+                timeout_ms: int, do_warm: bool = True) -> dict:
+    pg = browser.new_page()
+    try:
+        if do_warm:
+            try:
+                pg.goto("https://trends.google.com/", timeout=timeout_ms,
+                        wait_until="domcontentloaded")
+                pg.wait_for_timeout(1500)
+            except Exception:
+                pass
         result = pg.evaluate(_TRENDS_JS,
                              {"explore": explore_url, "hl": hl, "tz": tz})
     finally:
@@ -294,10 +379,14 @@ class _Worker:
             thread.join(timeout=timeout)
 
     def submit(self, fn, *, proxy: dict | None = None, locale: str = "en-US",
-               timeout: float = 300.0):
+               timeout: float = 300.0, priority: bool = False,
+               warm_override: bool | None = None,
+               marks_warm: bool = False):
         self._ensure()
         box: dict = {"done": threading.Event()}
-        self._q.put({"fn": fn, "proxy": proxy, "locale": locale, "box": box})
+        self._q.put({"fn": fn, "proxy": proxy, "locale": locale, "box": box,
+                     "priority": priority, "warm_override": warm_override,
+                     "marks_warm": marks_warm})
         if not box["done"].wait(timeout):
             raise TimeoutError(f"{self.name} browser job timeout {timeout:.0f}s")
         if "error" in box:
@@ -313,7 +402,7 @@ class _Worker:
             self._thread.start()
 
     def _gap(self) -> None:
-        wait = random.uniform(2.5, 6.0) - (time.time() - self._last)
+        wait = random.uniform(_gap_lo, _gap_hi) - (time.time() - self._last)
         if wait > 0:
             time.sleep(wait)
 
@@ -362,6 +451,14 @@ class _Worker:
         except Exception as exc:
             self._drain(exc)
 
+    def _do_warm(self, job) -> bool:
+        override = job.get("warm_override")
+        if override is not None:
+            return bool(override)
+        if not self.persistent:
+            return True
+        return not _is_warm(_warm_state_key(self.profile))
+
     def _loop_with_browser(self, browser) -> None:
         while True:
             try:
@@ -370,13 +467,19 @@ class _Worker:
                 break
             if job is None:
                 break
-            self._gap()
+            if not job.get("priority"):
+                self._gap()
             box = job["box"]
+            do_warm = self._do_warm(job)
             try:
+                box["result"] = job["fn"](browser, do_warm)
+            except TypeError:
                 box["result"] = job["fn"](browser)
             except Exception as exc:
                 box["error"] = exc
             finally:
+                if do_warm or job.get("marks_warm"):
+                    _mark_warm(_warm_state_key(self.profile))
                 self._last = time.time()
                 box["done"].set()
 
@@ -389,14 +492,18 @@ class _Worker:
                 break
             if job is None:
                 break
-            self._gap()
+            if not job.get("priority"):
+                self._gap()
             box = job["box"]
             try:
                 kwargs = dict(_LAUNCH)
                 if job["proxy"]:
                     kwargs["proxy"] = job["proxy"]
                 with Camoufox(locale=job["locale"], **kwargs) as browser:
-                    box["result"] = job["fn"](browser)
+                    try:
+                        box["result"] = job["fn"](browser, True)
+                    except TypeError:
+                        box["result"] = job["fn"](browser)
             except Exception as exc:
                 box["error"] = exc
             finally:
@@ -463,6 +570,10 @@ def fetch_rendered(url: str, params: dict | None = None,
                    resolve_goto: bool = True,
                    proxy: dict | None = None,
                    expect: tuple[str, ...] = ("<h3",),
+                   wait_for: str | None = None,
+                   wait_text: str | None = None,
+                   priority: bool = False,
+                   warm_override: bool | None = None,
                    _retried: bool = False) -> dict:
     """Render halaman di browser (persisten untuk direct, sekali-pakai untuk
     proxy). `expect` = marker hasil per jenis halaman (lihat _is_challenge).
@@ -474,14 +585,16 @@ def fetch_rendered(url: str, params: dict | None = None,
     if params:
         full = url + "?" + urllib.parse.urlencode(params)
 
-    def job(browser) -> dict:
+    def job(browser, do_warm: bool = True) -> dict:
         return _render_job(browser, full, locale, timeout_ms, settle_ms,
-                           warm_url, resolve_goto, expect)
+                           warm_url, resolve_goto, expect, wait_for,
+                           wait_text, do_warm)
 
     worker = _PROXY if proxy else _DIRECT
     wait = (timeout_ms / 1000.0) * 3 + 60
     try:
-        return worker.submit(job, proxy=proxy, locale=locale, timeout=wait)
+        return worker.submit(job, proxy=proxy, locale=locale, timeout=wait,
+                             priority=priority, warm_override=warm_override)
     except Exception as exc:
         if not _retried and "not installed" in str(exc).lower():
             healed, _info = _selfheal_install()
@@ -490,7 +603,24 @@ def fetch_rendered(url: str, params: dict | None = None,
                                       timeout_ms=timeout_ms,
                                       settle_ms=settle_ms, warm_url=warm_url,
                                       resolve_goto=resolve_goto, proxy=proxy,
-                                      expect=expect, _retried=True)
+                                      expect=expect, wait_for=wait_for,
+                                      wait_text=wait_text, priority=priority,
+                                      warm_override=warm_override,
+                                      _retried=True)
+        return {"error": _launch_error(exc)}
+
+
+def warm_homepage_and_cookies() -> dict:
+    """Bootstrap cepat: satu job (prioritas, tanpa jeda) yang membuka
+    google.com dan langsung mengembalikan cookies konteks."""
+    ok, _msg = available()
+    if not ok:
+        return {"error": "camoufox tidak tersedia"}
+    try:
+        return _DIRECT.submit(lambda browser, do_warm: _warm_job(browser),
+                              timeout=90, priority=True,
+                              warm_override=False, marks_warm=True)
+    except Exception as exc:
         return {"error": _launch_error(exc)}
 
 
@@ -513,13 +643,14 @@ def fetch_trends_series(keywords: list[str], geo: str = "",
                    + "?hl=" + hl + "&tz=" + str(tz)
                    + "&req=" + urllib.parse.quote(json.dumps(req)))
 
-    def job(browser) -> dict:
-        return _trends_job(browser, explore_url, hl, tz, timeout_ms)
+    def job(browser, do_warm: bool = True) -> dict:
+        return _trends_job(browser, explore_url, hl, tz, timeout_ms, do_warm)
 
     worker = _PROXY if proxy else _DIRECT
     wait = (timeout_ms / 1000.0) * 3 + 60
     try:
-        return worker.submit(job, proxy=proxy, locale=locale, timeout=wait)
+        return worker.submit(job, proxy=proxy, locale=locale, timeout=wait,
+                             priority=True)
     except Exception as exc:
         if not _retried and "not installed" in str(exc).lower():
             healed, _info = _selfheal_install()
