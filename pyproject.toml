@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "google-scrape-mcp"
+version = "0.7.2"
+description = "MCP server for Google Search via pure scraping, no API key"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Maybeyes111" }]
+keywords = ["mcp", "google", "search", "scraping", "curl-cffi", "camoufox", "osint"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Internet :: WWW/HTTP",
+  "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+  "fastmcp>=2.0",
+  "curl_cffi>=0.10",
+  "beautifulsoup4>=4.12",
+  "lxml>=5.0",
+]
+
+[project.optional-dependencies]
+browser = ["camoufox>=0.4"]
+
+[project.scripts]
+google-scrape-mcp = "google_scrape_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/Maybeyes111/google-scrape-mcp"
+Repository = "https://github.com/Maybeyes111/google-scrape-mcp"
+
+[tool.setuptools.packages.find]
+where = ["src"]

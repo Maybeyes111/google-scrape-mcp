@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "google-scrape": {
+      "command": "google-scrape-mcp"
+    }
+  }
+}
