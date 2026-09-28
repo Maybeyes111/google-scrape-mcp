@@ -129,7 +129,13 @@ Result shapes:
 - RSS/JSON tools (news, patents, trends daily, suggest, translate) are
   essentially never blocked — prefer them when reliability matters.
 
-## 8. Relevant configuration for agents
+## 8. Tool profiles
+
+Operators can hide non-search extras with `GOOGLE_SCRAPE_TOOLS=core`
+(finance/fx/BI rates, translate, crawl disappear; search is unchanged). If a
+tool you expect is missing, that is why, not an error.
+
+## 9. Relevant configuration for agents
 
 - HTTP blocks are recorded (`http_blocked` in `google_status`); while a family
   is in cooldown, `auto` goes straight to the browser — that is not a failure.

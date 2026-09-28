@@ -43,6 +43,13 @@ camoufox fetch               # download the Camoufox browser once
 Core dependencies: `fastmcp`, `curl_cffi`, `beautifulsoup4`, `lxml`,
 `defusedxml`. Optional: `camoufox` for the browser engine.
 
+Platform support, honestly:
+
+| Component | Platforms | Notes |
+|---|---|---|
+| HTTP engine (`curl_cffi`) | Linux, macOS, Windows (x86_64 wheels; arm64 where published) | no browser needed |
+| Browser engine (`camoufox`) | **Linux x86_64 (tested here)**; upstream also ships macOS (Intel/Apple Silicon) and Windows x86_64 builds | ~660 MB download; **ARM Linux and Android are untested** and will likely need manual builds. If that is your target, use the HTTP engine only and expect more `blocked` responses |
+
 ## 3. MCP client config
 
 ```json
@@ -220,8 +227,42 @@ Docs: [`AGENT_GUIDE.md`](AGENT_GUIDE.md) for agents,
 - Shopping does not expose product URLs in the initial HTML; links render on
   click.
 - No Maps/local search, reverse image search, inline AI Overview, or flights.
-- Datacenter proxy pools are mostly useless for Google. Prefer residential.
+- Featured snippets for FX queries can be noisy; `fx_rate` is the clean field.
 
-## 13. License
+## 13. Reliability: this is a cat-and-mouse game
+
+This is an unofficial scraper fighting Google's bot detection. Pretending
+otherwise would be dishonest. What we measured (see `RESEARCH.md`):
+
+- Raw HTTP `/search` from a flagged IP is **always** challenged; the fast path
+  only works because fresh browser cookies are attached. Browser profiles can
+  burn out (`profile burnout`), and they get rotated, but sustained volume
+  without good proxies will hit `blocked` regularly.
+- Proxies help, but free/datacenter pools are mostly dead or rejected: one
+  public list yielded **8 usable proxies out of 36 live** ones.
+- Browser sessions are heavy (hundreds of MB, 5-15s per render) and need the
+  Camoufox binary; the fast path exists precisely to avoid them when possible.
+- RSS/JSON surfaces (news, patents, trends, suggest, translate, finance
+  quotes) are the stable part. Search surfaces are the fragile part.
+- All numbers here come from measurements on one residential IP. IP
+  reputation, region and hour change everything.
+
+If you need guaranteed, stable Google results, use an official API. This
+project trades that stability for zero cost and no key.
+
+## 14. Legal, ToS and proxy safety
+
+- Scraping Google Search **violates Google's Terms of Service**. You run this
+  at your own risk. The MIT license grants no rights beyond the code and takes
+  no responsibility for your use.
+- Rate limits, IP reputation and any account consequences are yours to manage.
+  Do not use this for abuse or to attack services.
+- **Treat every proxy as untrusted.** A proxy operator can log, inject or
+  modify traffic; a malicious one can serve you forged content. Free proxies
+  are the worst case. Never route credentials or sensitive traffic through
+  pool proxies, and read curated lists as "reachable", not "safe". Prefer
+  residential/VPS proxies you control.
+
+## 15. License
 
 MIT, see [LICENSE](LICENSE).

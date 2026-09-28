@@ -8,11 +8,17 @@ diblokir Google mengembalikan status transparan, bukan hasil palsu.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 import urllib.parse
 
 from fastmcp import FastMCP
+
+try:
+    from mcp.types import ToolAnnotations
+except Exception:  # pragma: no cover - versi mcp lama
+    ToolAnnotations = None
 
 from .client import (
     BLOCKED_MSG,
@@ -59,6 +65,27 @@ from .forensics import record as forensic_record, save_sample, stats as forensic
 from .proxies import get_pool
 
 mcp = FastMCP("google-scrape")
+
+# Profil tool: 'full' (default) mendaftarkan semua; 'core' menyembunyikan
+# tool ekstra (finance/fx/BI, translate, crawl) supaya konteks agent hemat.
+_TOOLS_PROFILE = os.environ.get("GOOGLE_SCRAPE_TOOLS", "full").strip().lower()
+_RATE_NOTE = ("\n\nRate-limited by Google: avoid rapid repeats; when the "
+              "result is blocked, wait or switch to an RSS-based tool.")
+
+
+def _tool(*, extras: bool = False):
+    """Dekorator tool dengan annotations + catatan rate-limit + profil."""
+    def decorate(fn):
+        if extras and _TOOLS_PROFILE in ("core", "search", "minimal"):
+            return fn
+        fn.__doc__ = (fn.__doc__ or "").rstrip() + _RATE_NOTE
+        kwargs = {}
+        if ToolAnnotations is not None:
+            kwargs["annotations"] = ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True,
+                openWorldHint=True)
+        return mcp.tool(**kwargs)(fn)
+    return decorate
 
 SEARCH_BASE = "https://www.google.com/search"
 SCHOLAR_BASE = "https://scholar.google.com/scholar"
@@ -319,7 +346,7 @@ def _run_search(base: str, params: dict, render_params: dict, hl: str,
 
 
 # ---------------------------------------------------------------- web ----
-@mcp.tool()
+@_tool()
 def google_web_search(query: str, num: int = 10, start: int = 0,
                       hl: str = "en", gl: str = "us",
                       engine: str = "auto") -> dict:
@@ -339,7 +366,7 @@ def google_web_search(query: str, num: int = 10, start: int = 0,
                        parse_web, parse_serp_live)
 
 
-@mcp.tool()
+@_tool()
 def google_image_search(query: str, num: int = 20, page: int = 1,
                         hl: str = "en", gl: str = "us",
                         engine: str = "auto") -> dict:
@@ -357,7 +384,7 @@ def google_image_search(query: str, num: int = 20, page: int = 1,
                        expect=("encrypted-tbn",))
 
 
-@mcp.tool()
+@_tool()
 def google_video_search(query: str, num: int = 10, start: int = 0,
                         hl: str = "en", gl: str = "us",
                         engine: str = "auto") -> dict:
@@ -375,7 +402,7 @@ def google_video_search(query: str, num: int = 10, start: int = 0,
                        parse_web, parse_serp_live, limit=num)
 
 
-@mcp.tool()
+@_tool()
 def google_books_search(query: str, num: int = 10, start: int = 0,
                         hl: str = "en", gl: str = "us",
                         engine: str = "auto") -> dict:
@@ -393,7 +420,7 @@ def google_books_search(query: str, num: int = 10, start: int = 0,
                        parse_web, parse_serp_live, limit=num)
 
 
-@mcp.tool()
+@_tool()
 def google_shopping_search(query: str, num: int = 10, start: int = 0,
                            hl: str = "en", gl: str = "us",
                            engine: str = "auto") -> dict:
@@ -413,7 +440,7 @@ def google_shopping_search(query: str, num: int = 10, start: int = 0,
 
 
 # ---------------------------------------------------------------- news ---
-@mcp.tool()
+@_tool()
 def google_news_search(query: str, num: int = 20, hl: str = "en-US",
                        gl: str = "US", ceid: str = "US:en",
                        engine: str = "auto") -> dict:
@@ -455,7 +482,7 @@ def google_news_search(query: str, num: int = 20, hl: str = "en-US",
     return out
 
 
-@mcp.tool()
+@_tool()
 def google_news_homepage(hl: str = "en-US", gl: str = "US",
                          ceid: str = "US:en") -> dict:
     """Scrape Google News homepage RSS: top headlines right now."""
@@ -470,7 +497,7 @@ def google_news_homepage(hl: str = "en-US", gl: str = "US",
 
 
 # -------------------------------------------------------------- scholar --
-@mcp.tool()
+@_tool()
 def google_scholar_search(query: str, num: int = 10, start: int = 0,
                           hl: str = "en", year_low: int = 0,
                           year_high: int = 0, engine: str = "auto") -> dict:
@@ -493,7 +520,7 @@ def google_scholar_search(query: str, num: int = 10, start: int = 0,
                        parse_scholar, parse_scholar, expect=("gs_rt",))
 
 
-@mcp.tool()
+@_tool()
 def google_scholar_cited_by(cluster_id: str, num: int = 10,
                             start: int = 0, hl: str = "en",
                             engine: str = "auto") -> dict:
@@ -509,7 +536,7 @@ def google_scholar_cited_by(cluster_id: str, num: int = 10,
 
 
 # -------------------------------------------------------------- patents --
-@mcp.tool()
+@_tool()
 def google_patents_search(query: str, num: int = 10, page: int = 1) -> dict:
     """Scrape Google Patents XHR JSON: title, number, inventors, dates, PDF.
 
@@ -552,7 +579,7 @@ def _normalize_finance_symbol(ticker: str, exchange: str = "") -> str:
     return up
 
 
-@mcp.tool()
+@_tool(extras=True)
 def google_finance_quote(ticker: str, exchange: str = "",
                          hl: str = "en") -> dict:
     """Scrape Google Finance quote: saham, forex, kripto.
@@ -607,7 +634,7 @@ def google_finance_quote(ticker: str, exchange: str = "",
     return out
 
 
-@mcp.tool()
+@_tool(extras=True)
 def google_fx_rate(base: str = "USD", quote: str = "IDR", amount: float = 1.0,
                    hl: str = "en", gl: str = "us", engine: str = "auto") -> dict:
     """Kurs langsung dari widget konverter SERP (mis. "1 USD to IDR").
@@ -656,7 +683,7 @@ BI_KURS_URL = ("https://www.bi.go.id/id/statistik/informasi-kurs/"
                "transaksi-bi/default.aspx")
 
 
-@mcp.tool()
+@_tool(extras=True)
 def google_kurs_bi(currency: str = "", engine: str = "auto") -> dict:
     """Kurs Transaksi Bank Indonesia (Jual/Beli) dari tabel resmi BI.
 
@@ -708,7 +735,7 @@ def google_kurs_bi(currency: str = "", engine: str = "auto") -> dict:
 
 
 # ------------------------------------------------------------ translate --
-@mcp.tool()
+@_tool(extras=True)
 def google_translate(text: str, target: str = "en",
                      source: str = "auto") -> dict:
     """Translate text via Google's unofficial gtx endpoint (no key)."""
@@ -727,7 +754,7 @@ def google_translate(text: str, target: str = "en",
 
 
 # -------------------------------------------------------------- suggest --
-@mcp.tool()
+@_tool()
 def google_suggest(query: str, hl: str = "en") -> dict:
     """Google autocomplete suggestions (no block)."""
     params = {"client": "firefox", "q": query, "hl": hl}
@@ -744,7 +771,7 @@ def google_suggest(query: str, hl: str = "en") -> dict:
 
 
 # --------------------------------------------------------------- trends --
-@mcp.tool()
+@_tool()
 def google_trends_daily(geo: str = "US", hl: str = "en-US") -> dict:
     """Google daily trending searches RSS (no block): topic, traffic, links."""
     url = f"https://trends.google.com/trending/rss?geo={urllib.parse.quote(geo)}"
@@ -809,7 +836,7 @@ def _trends_browser(kws: list[str], geo: str, timeframe: str, hl: str,
             "results": []}
 
 
-@mcp.tool()
+@_tool()
 def google_trends_interest(keywords: str, geo: str = "", timeframe: str = "today 12-m",
                            hl: str = "en-US", tz: int = 0,
                            engine: str = "auto") -> dict:
@@ -897,7 +924,7 @@ def google_trends_interest(keywords: str, geo: str = "", timeframe: str = "today
 
 
 # -------------------------------------------------------------- ai mode --
-@mcp.tool()
+@_tool()
 def google_ai_mode(query: str, hl: str = "en", gl: str = "us",
                    engine: str = "auto") -> dict:
     """Google Mode AI (udm=50): jawaban sintesis + sumber, cocok untuk
@@ -929,7 +956,7 @@ TABS = ("web", "images", "videos", "news", "books", "shopping",
         "scholar", "patents", "ai")
 
 
-@mcp.tool()
+@_tool()
 def google_search(query: str, tab: str = "web", page: int = 1,
                   num: int = 10, hl: str = "en", gl: str = "us",
                   engine: str = "auto") -> dict:
@@ -988,7 +1015,7 @@ def google_search(query: str, tab: str = "web", page: int = 1,
 
 
 # ---------------------------------------------------------------- crawl --
-@mcp.tool()
+@_tool(extras=True)
 def google_crawl(url: str, max_chars: int = 8000,
                  include_links: bool = True) -> dict:
     """Crawl any URL (e.g. a search result): title, meta, text, outbound links."""
@@ -1074,14 +1101,14 @@ USAGE PATTERNS
 """
 
 
-@mcp.tool()
+@_tool()
 def google_help() -> dict:
     """Agent-facing usage guide: tool map, engine semantics, status contract
     and safe usage patterns. Read this before experimenting."""
     return {"status": "ok", "guide": _HELP}
 
 
-@mcp.tool()
+@_tool()
 def google_status() -> dict:
     """Health check: which Google endpoints are reachable from this IP right
     now, plus proxy pool, cache, cooldowns and forensic counters."""
