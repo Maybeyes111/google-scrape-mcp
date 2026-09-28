@@ -7,55 +7,43 @@
 [![Dependabot](https://img.shields.io/badge/dependabot-enabled-brightgreen.svg)](https://github.com/Maybeyes111/google-scrape-mcp/security)
 [![MCP](https://img.shields.io/badge/MCP-server-purple.svg)](https://modelcontextprotocol.io)
 
-MCP server for **Google Search via pure scraping — no API key required**.
-Two engines work together: a fast HTTP path (`curl_cffi` with real Chrome TLS
-impersonation) and a **Camoufox headless browser** fallback that actually runs
-JavaScript when Google challenges the request.
+![google-scrape-mcp](assets/banner.png)
 
-Built for agents that need Google results **reliably and honestly**: every
-response carries an explicit `status`, and the server never fabricates results.
+MCP server that gives AI agents real Google results with no API key: a measured
+HTTP fast path (0.3–2.9s searches), a Camoufox browser fallback that actually
+runs the JS challenges, adaptive cooldowns derived from probing, and honest
+status codes instead of fabricated results.
 
-## Features
+![live demo](assets/demo.gif)
 
-- **Unified search tool + 9 tabs**: web, images, videos, news, books,
-  shopping, scholar, patents, and AI Mode.
-- **Cookie bootstrap fast path**: a browser homepage warm-up mints fresh
-  session cookies; subsequent HTTP searches pass in **0.3–2.9s** (vs 5–15s
-  full browser render). Cookies are cached for 5 minutes.
-- **Browser fallback that obeys JS**: persistent Camoufox profile, human-like
-  pacing, consent handling, challenge wait/reload — everything a real visitor
-  does.
-- **Profile rotation**: when a browser identity gets burned (repeated blocks),
-  it is archived and a fresh profile takes over automatically.
-- **Adaptive cooldowns**: HTTP is retried per endpoint family with escalating
-  backoff; browser blocks trigger a fail-fast cooldown so a rate-limit period
-  does not cost 100s per call.
-- **Proxy pool**: rotation, per-proxy cooldown, proven-only usage for browser
-  fallback, plus a curation tool that validates proxies against `/search`.
-- **Forensics & research harness**: blocked pages are sampled to disk with
-  metadata; `probe` measures block types per endpoint/engine so you can tune
-  policies with data instead of guesses.
-- **RSS/JSON surfaces** (news, patents, trends, suggest, translate, finance)
-  that are essentially never blocked and are preferred for reliability.
+Full-quality recording: [`assets/demo_real.mp4`](assets/demo_real.mp4) (24s).
+Every number in that recording is from a real run: web 1.1s, images 0.8s,
+scholar 7.1s, AI Mode 9.2s (2,548 chars), USD/IDR quote 0.5s.
 
-## Install
+## 1. What it does
+
+- Searches Google across web, images, videos, news, books, shopping, scholar,
+  patents and AI Mode through one MCP server.
+- Answers each request with `status: ok | blocked | rate_limited | limited |
+  empty | error`. When Google blocks, it says so. It never invents results.
+- Keeps a browser profile warm so HTML pages that need JavaScript (scholar,
+  AI Mode) come back complete.
+- Exposes RSS/JSON endpoints (news, patents, trends, suggest, translate,
+  finance) that are never blocked, for when reliability matters more than
+  coverage.
+
+## 2. Install
 
 ```bash
-pip install -e .            # HTTP engine only
-pip install -e ".[browser]" # + Camoufox browser engine
-camoufox fetch              # download the Camoufox browser once
+pip install -e .             # HTTP engine only
+pip install -e ".[browser]"  # + Camoufox browser engine
+camoufox fetch               # download the Camoufox browser once
 ```
 
-Core dependencies: `fastmcp`, `curl_cffi`, `beautifulsoup4`, `lxml`.
-Optional: `camoufox` (browser engine).
+Core dependencies: `fastmcp`, `curl_cffi`, `beautifulsoup4`, `lxml`,
+`defusedxml`. Optional: `camoufox` for the browser engine.
 
-## Run
-
-```bash
-google-scrape-mcp           # stdio transport (for MCP clients)
-```
-
-MCP client config:
+## 3. MCP client config
 
 ```json
 {
@@ -67,148 +55,163 @@ MCP client config:
 }
 ```
 
-## Tools (20)
+Run `google-scrape-mcp` directly for stdio transport. Agents can call the
+`google_help` tool for a runtime usage guide, or read
+[`AGENT_GUIDE.md`](AGENT_GUIDE.md).
+
+## 4. Tools (20)
 
 | Tool | Source | Notes |
 |---|---|---|
-| `google_search` | **unified**: `tab` = web/images/videos/news/books/shopping/scholar/patents/ai, `page` 1–10 | dispatcher to the tools below |
+| `google_search` | unified: `tab` = web/images/videos/news/books/shopping/scholar/patents/ai, `page` 1–10 | dispatcher for the tools below |
 | `google_web_search` | organic results, featured snippet, related searches | HTTP fast path, browser fallback |
-| `google_image_search` | direct image URLs, page URLs, dimensions | fast path OK |
-| `google_video_search` | `tbm=vid` | fast path OK |
-| `google_books_search` | `tbm=bks` | fast path OK |
-| `google_shopping_search` | product title, price, was-price, merchant, rating | fast path when possible, browser fallback |
-| `google_news_search` / `google_news_homepage` | News RSS | always live, never blocked |
-| `google_scholar_search` | papers, authors/venue, citations, PDF links | HTTP 429 → browser |
-| `google_scholar_cited_by` | Scholar `cites=` | extra protection: often `blocked` (reported honestly) |
-| `google_patents_search` | Patents XHR JSON | always live |
-| `google_finance_quote` | stocks/forex/crypto (`USD-IDR`, `BBCA:IDX`) | always live |
-| `google_translate` | unofficial `gtx` endpoint | always live |
-| `google_suggest` | autocomplete | always live |
-| `google_trends_daily` | Trends RSS | always live |
-| `google_trends_interest` | explore → multiline widgetdata | HTTP often 401 → browser fallback |
-| `google_ai_mode` | AI Mode (`udm=50`): synthesized `answer` + `sources` | browser (JS streams the answer) |
-| `google_crawl` | read any URL: title, meta, text, outbound links | live |
-| `google_help` | agent usage guide (same as `AGENT_GUIDE.md`) | live |
-| `google_status` | health check: endpoints, proxies, cache, cooldowns | live |
+| `google_image_search` | direct image URLs, page URLs, dimensions | fast path |
+| `google_video_search` | `tbm=vid` | fast path |
+| `google_books_search` | `tbm=bks` | fast path |
+| `google_shopping_search` | title, price, was-price, merchant, rating | fast path when the markup allows, browser otherwise |
+| `google_news_search` / `google_news_homepage` | News RSS | never blocked |
+| `google_scholar_search` | papers, venue, citations, PDF links | browser (HTTP 429) |
+| `google_scholar_cited_by` | Scholar `cites=` | extra protection, often `blocked` and reported as such |
+| `google_patents_search` | Patents XHR JSON | never blocked |
+| `google_finance_quote` | stocks, forex, crypto (`USD-IDR`, `BBCA:IDX`) | never blocked |
+| `google_translate` | unofficial `gtx` endpoint | never blocked |
+| `google_suggest` | autocomplete | never blocked |
+| `google_trends_daily` | Trends RSS | never blocked |
+| `google_trends_interest` | explore into multiline widgetdata | HTTP often 401, browser fallback |
+| `google_ai_mode` | AI Mode (`udm=50`), synthesized `answer` + `sources` | browser, JS streams the answer |
+| `google_crawl` | read any URL: title, meta, text, links | live |
+| `google_help` | agent usage guide | live |
+| `google_status` | endpoints, proxies, cache, cooldowns, forensics | live |
 
-All tools return `{"status": "ok" | "blocked" | "rate_limited" | "limited" | "empty" | "error", ...}`.
-Blocked means blocked — no fake results.
+## 5. Engines and the cookie fast path
 
-> **AI agents**: read [`AGENT_GUIDE.md`](AGENT_GUIDE.md), or call the
-> `google_help` tool at runtime for the same guidance.
+Every search tool takes an `engine` argument:
 
-## Engines
+- `auto` (default): HTTP first, browser when needed.
+- `http`: direct only. Fast, challenge-prone on flagged IPs.
+- `proxy`: force the proxy pool.
+- `browser`: Camoufox headless render, 5–15s.
 
-Every search tool accepts `engine`:
+The fast path works like this. A browser homepage visit mints fresh session
+cookies (`NID`, `AEC`, `SNID`, `GSP`). Plain HTTP `/search` with those cookies,
+a coherent `Referer`/`Sec-Fetch-Site` and a clean cookie jar passes in
+0.3–2.9s. Surfaces proven to pass over HTTP: web, images, videos, books,
+shopping. Scholar (HTTP 429) and AI Mode (answer is streamed by JS) stay on
+the browser. Cookies are cached for 5 minutes and refreshed in the background
+while tools are in use, so searches rarely pay the warm-up cost.
 
-- `auto` (default) — HTTP fast path with bootstrap cookies, then browser.
-- `http` — direct HTTP only (challenge-prone on flagged IPs).
-- `proxy` — force the proxy pool.
-- `browser` — Camoufox headless render (~5–15s).
+Findings behind this are documented with measurements in
+[`RESEARCH.md`](RESEARCH.md).
 
-### Cookie bootstrap (the fast path)
-
-1. A browser warm-up visits `google.com` (persistent profile) and mints fresh
-   session cookies (`NID`, `AEC`, `SNID`, `GSP`, …).
-2. Those cookies are sent over plain HTTP with coherent navigation metadata
-   (`Referer` + `Sec-Fetch-Site: same-origin`) from a *clean* session jar.
-3. Surfaces that pass over HTTP: **web, images, videos, books, shopping**.
-   Scholar (429) and AI Mode (answer is streamed by JS) stay on the browser.
-
-Cookies are cached in `~/.cache/google-scrape-mcp/bootstrap_cookies.json`
-with a 5-minute TTL (`GOOGLE_SCRAPE_COOKIE_TTL`).
-
-## Performance
-
-Measured on a residential/flagged IP (v0.8.0):
+## 6. Performance (measured)
 
 | Operation | Before | Now |
 |---|---|---|
-| Web search (end-to-end) | ~1.0s | **0.3–0.7s** |
-| Bootstrap warm-up | 16.4s | **5.7s** |
-| Scholar search | 11.3s | **4.2–4.4s** |
-| AI Mode (full answer) | 11.1s (sometimes truncated) | **~10.8s, complete** |
-| `/goto` link resolution | sequential | **parallel, ~0.5s** |
+| Web search (end-to-end) | ~1.0s | 0.3–0.7s |
+| Browser warm-up + cookies | 16.4s | 5.7s |
+| Scholar search | 11.3s | 4.2–4.4s |
+| AI Mode answer | 11.1s, sometimes truncated | 9–11s, complete |
+| SERP parse + `/goto` resolution | sequential | parallel, ~0.5s |
 
-Speed mechanisms:
+Mechanisms: one priority job for warm-up plus cookies, adaptive warm-up
+skipping (`GOOGLE_SCRAPE_WARM_TTL`), selector and text-stability waits instead
+of fixed sleeps, parallel `/goto` resolution, a background bootstrap keeper,
+and a 1.5–3.5s human-like gap between browser jobs.
 
-- **One priority job** for warm-up + cookie retrieval (no queue gap, no second job).
-- **Adaptive warm skip**: if the browser profile was warmed within
-  `GOOGLE_SCRAPE_WARM_TTL` (default 600s), the homepage visit is skipped.
-- **Content waits instead of fixed sleeps**: `wait_for` selectors for scholar/
-  news/shopping and text-stability polling for AI Mode answers.
-- **Parallel `/goto` resolution** (6 workers, cap 12 links).
-- **Background bootstrap keeper**: while tools are being used (15-minute
-  activity window), cookies are refreshed in the background so searches never
-  pay the warm-up cost. Disable with `GOOGLE_SCRAPE_KEEPER=0`.
-- **Human job gap** reduced to 1.5–3.5s (`GOOGLE_SCRAPE_JOB_GAP=min-max`).
+## 7. Anti-block research
 
-## Proxy pool
+The repository ships the methodology, not just the result:
 
-Accepted line formats: `http://host:port`, `https://host:port`,
+- `python3 -m google_scrape_mcp.probe --quick|--full|--tls|--analyze` runs a
+  controlled endpoint/engine matrix with human-like spacing.
+- Blocked pages are sampled to `~/.cache/google-scrape-mcp/forensics/` with
+  counters in `block_stats.json`, surfaced by `google_status`.
+- Adaptive cooldowns are per endpoint family (search/scholar/finance), with
+  escalating backoff and a fail-fast browser cooldown. Burned browser profiles
+  are rotated automatically.
+
+Measured conclusions, including why raw HTTP `/search` always gets a JS
+challenge and why cookies alone do not fix it, are in
+[`RESEARCH.md`](RESEARCH.md).
+
+## 8. Proxy pool
+
+Accepted formats: `http://host:port`, `https://host:port`,
 `socks5://host:port` (`socks5h` normalized), `socks4://host:port`, with
 optional `user:pass@`, plus bare `host:port` and `host:port:user:pass`.
 
-Sources (priority order):
+Sources, in priority order:
 
-1. `GOOGLE_SCRAPE_PROXIES` — inline list (comma/space/newline separated) or a
+1. `GOOGLE_SCRAPE_PROXIES`: inline list (comma/space/newline separated) or a
    file path (starting with `/`, `~`, or ending in `.txt`).
-2. `GOOGLE_SCRAPE_PROXY_FILES` — colon-separated file paths.
+2. `GOOGLE_SCRAPE_PROXY_FILES`: colon-separated file paths.
 3. Defaults when present: `~/.config/google-scrape/proxies.txt` and
-   `~/.cache/google-scrape-mcp/proxies_curated.txt` (max 500 lines/file).
+   `~/.cache/google-scrape-mcp/proxies_curated.txt`.
 
-Failed proxies get a cooldown (`GOOGLE_SCRAPE_PROXY_COOLDOWN`, default 600s).
-Browser fallback only uses proxies that have **succeeded before** (proven), so
-dead datacenter pools don't waste minutes.
-
-Curate your own pool (validates liveness *and* `/search` capability):
+Failed proxies get a cooldown. Browser fallback only uses proxies that have
+succeeded before, so a dead pool never burns minutes. Curate your own:
 
 ```bash
 python3 -m google_scrape_mcp.curate --limit 100 --workers 8
 ```
 
-## Environment variables
+## 9. Environment variables
 
-| Env | Default | Purpose |
+| Variable | Default | Purpose |
 |---|---|---|
-| `GOOGLE_SCRAPE_PROXY_MODE` | `auto` | `auto` (direct→proxy), `off`, `always` |
+| `GOOGLE_SCRAPE_PROXY_MODE` | `auto` | `auto`, `off`, or `always` |
 | `GOOGLE_SCRAPE_PROXY_COOLDOWN` | `600` | failed-proxy cooldown (s) |
-| `GOOGLE_SCRAPE_PROXY_CA` | — | extra CA bundle for self-signed HTTPS proxies |
-| `GOOGLE_SCRAPE_MIN_INTERVAL` | `1.0` | min delay between requests (s) |
+| `GOOGLE_SCRAPE_PROXY_CA` | | extra CA bundle for self-signed HTTPS proxies |
+| `GOOGLE_SCRAPE_MIN_INTERVAL` | `1.0` | minimum delay between requests (s) |
 | `GOOGLE_SCRAPE_TIMEOUT` | `25` | request timeout (s) |
 | `GOOGLE_SCRAPE_RETRIES` | `3` | proxy attempts per request |
-| `GOOGLE_SCRAPE_CACHE_TTL` | `600` | response cache TTL (`0` disables) |
+| `GOOGLE_SCRAPE_CACHE_TTL` | `600` | response cache TTL, `0` disables |
 | `GOOGLE_SCRAPE_CACHE_MAX` | `256` | max cache entries |
 | `GOOGLE_SCRAPE_IMPERSONATE` | `chrome120` | curl_cffi TLS target |
-| `GOOGLE_SCRAPE_JS_COOLDOWN` | `600` | base HTTP cooldown after a block (doubles per level, capped at 1h) |
+| `GOOGLE_SCRAPE_JS_COOLDOWN` | `600` | base HTTP cooldown after a block, doubles per level, capped at 1h |
 | `GOOGLE_SCRAPE_COOKIE_TTL` | `300` | bootstrap cookie lifetime (s) |
-| `GOOGLE_SCRAPE_BROWSER_COOLDOWN` | `180` | base browser cooldown after a block (doubles per level) |
+| `GOOGLE_SCRAPE_BROWSER_COOLDOWN` | `180` | base browser cooldown after a block |
+| `GOOGLE_SCRAPE_WARM_TTL` | `600` | skip the homepage warm-up if warmed more recently |
+| `GOOGLE_SCRAPE_JOB_GAP` | `1.5-3.5` | human-like gap between browser jobs (s) |
+| `GOOGLE_SCRAPE_KEEPER` | `1` | background bootstrap keeper, `0` disables |
 | `GOOGLE_SCRAPE_FORENSICS` | `1` | save blocked-page samples |
-| `GOOGLE_SCRAPE_NO_SELFHEAL` | — | disable automatic `camoufox fetch` when the browser is missing |
-| `GOOGLE_SCRAPE_WARM_TTL` | `600` | skip the browser homepage warm-up if warmed more recently than this (s) |
-| `GOOGLE_SCRAPE_JOB_GAP` | `1.5-3.5` | human-like delay between browser jobs (min-max seconds) |
-| `GOOGLE_SCRAPE_KEEPER` | `1` | background bootstrap keeper (`0` disables) |
+| `GOOGLE_SCRAPE_NO_SELFHEAL` | | disable automatic `camoufox fetch` when missing |
 
-## Research & forensics
+## 10. Security
 
-- [`RESEARCH.md`](RESEARCH.md) — measured findings: why raw HTTP `/search`
-  always gets a JS challenge, why cookies alone don't help, how the bootstrap
-  fast path works, surface-by-surface results, profile burnout.
-- `python3 -m google_scrape_mcp.probe --quick|--full|--tls|--analyze` —
-  controlled block-measurement harness with human-like spacing.
-- Blocked pages are sampled (HTML + metadata) under
-  `~/.cache/google-scrape-mcp/forensics/`, with counters in
-  `block_stats.json` (surfaced by `google_status`).
+- CodeQL (Python) and Bandit run on every push and weekly.
+- Dependabot keeps dependencies and GitHub Actions updated, grouped weekly.
+- Secret scanning with push protection is enabled.
+- `main` is protected against force pushes and deletion, including admins.
+- XML feeds are parsed with `defusedxml` when available.
+- Reporting: see [`SECURITY.md`](SECURITY.md).
 
-## Known limitations
+## 11. Project layout
 
-- `google_scholar_cited_by` is frequently `blocked` (Google protects that
-  endpoint harder). Use the `cited_by` count from `google_scholar_search`.
-- Shopping product URLs are rendered on click; the tool returns title, price,
-  was-price, merchant and rating.
-- No Maps/local search, reverse image search, AI Overview (inline) or flights.
-- Datacenter proxy pools are mostly useless for Google; prefer residential.
+```
+src/google_scrape_mcp/
+  server.py      MCP tools, engine orchestration, status
+  client.py      HTTP path: sessions, cache, cooldowns, bootstrap cookies
+  browser.py     Camoufox worker: persistent profile, challenges, rotation
+  parsers.py     SERP/RSS/JSON parsing, AI Mode cleanup, shopping cards
+  proxies.py     proxy pool: parsing, rotation, cooldowns, proven-only usage
+  forensics.py   block taxonomy samples and counters
+  probe.py       research harness (block measurement)
+  curate.py      proxy curation (liveness + /search capability)
+```
 
-## License
+Docs: [`AGENT_GUIDE.md`](AGENT_GUIDE.md) for agents,
+[`RESEARCH.md`](RESEARCH.md) for the anti-block measurements.
 
-MIT — see [LICENSE](LICENSE).
+## 12. Known limitations
+
+- `google_scholar_cited_by` is often `blocked` (Google protects that endpoint
+  harder). The `cited_by` count from `google_scholar_search` still works.
+- Shopping does not expose product URLs in the initial HTML; links render on
+  click.
+- No Maps/local search, reverse image search, inline AI Overview, or flights.
+- Datacenter proxy pools are mostly useless for Google. Prefer residential.
+
+## 13. License
+
+MIT, see [LICENSE](LICENSE).
