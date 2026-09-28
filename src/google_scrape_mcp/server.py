@@ -569,18 +569,41 @@ def google_finance_quote(ticker: str, exchange: str = "",
         out.update({"status": "blocked", "error": BLOCKED_MSG})
         return out
     quote = parse_finance_quote(r.text)
-    if not quote:
-        out.update({"status": "error",
-                    "error": f"Quote data block not found untuk simbol "
-                             f"'{symbol}'. Pakai format 'USD-IDR' (forex) atau "
-                             f"'BBCA:IDX' / ticker + exchange (saham). "
-                             f"Layout Google Finance bisa berubah; cek "
-                             f"google_fx_rate untuk kurs, atau google_crawl "
-                             f"halaman finance sebagai fallback.",
-                    "symbol_used": symbol,
-                    "url": out.get("url")})
+    if quote:
+        out["quote"] = quote
         return out
-    out["quote"] = quote
+
+    # Fallback otomatis: layout finance berubah -> jangan langsung menyerah.
+    pair = re.fullmatch(r"([A-Z]{3})-([A-Z]{3})", symbol)
+    if pair:
+        fb = google_fx_rate(pair.group(1), pair.group(2), hl=hl)
+        fx = fb.get("fx_rate")
+        if fb.get("status") == "ok" and fx:
+            out.update({"status": "ok", "fallback": "serp_fx_widget",
+                        "note": "Halaman finance tidak bisa diparse; kurs "
+                                "diambil dari widget konverter SERP.",
+                        "quote": {"symbol": symbol,
+                                  "pair": f"{pair.group(1)}/{pair.group(2)}",
+                                  "price": fx.get("rate"),
+                                  "source": "serp_fx_widget",
+                                  "formatted": fx.get("formatted")}})
+            return out
+
+    fb = google_web_search(f"{symbol} price", num=3)
+    if fb.get("status") == "ok" and fb.get("results"):
+        out.update({"status": "ok", "fallback": "web_search",
+                    "note": "Finance page tidak bisa diparse; ini hasil "
+                            "pencarian web, bukan quote terstruktur.",
+                    "results": fb["results"]})
+        return out
+
+    out.update({"status": "error",
+                "error": f"Quote data block not found untuk simbol "
+                         f"'{symbol}', dan fallback (fx widget / web search) "
+                         f"juga tidak menghasilkan. Pakai format 'USD-IDR' "
+                         f"(forex) atau 'BBCA:IDX' (saham), atau "
+                         f"google_kurs_bi untuk kurs resmi BI.",
+                "symbol_used": symbol, "url": out.get("url")})
     return out
 
 
@@ -611,9 +634,21 @@ def google_fx_rate(base: str = "USD", quote: str = "IDR", amount: float = 1.0,
                       {"q": query, "hl": hl, "gl": gl}, hl, query, engine,
                       parse, parse, expect=("DFlfde", "<h3"))
     if out.get("status") == "ok" and not out.get("fx_rate"):
+        # Fallback: halaman finance (forex pair) sebagai sumber kurs.
+        b, q = base.strip().upper(), quote.strip().upper()
+        if re.fullmatch(r"[A-Z]{3}", b) and re.fullmatch(r"[A-Z]{3}", q):
+            fb = google_finance_quote(f"{b}-{q}", hl=hl)
+            piece = (fb.get("quote") or {}).get("price")
+            if fb.get("status") == "ok" and piece:
+                out.update({"status": "ok", "fallback": "finance_quote",
+                            "note": "Widget SERP kosong; kurs dari halaman "
+                                    "Google Finance.",
+                            "fx_rate": {"rate": piece, "from": b, "to": q}})
+                return out
         out["status"] = "empty"
-        out["error"] = ("Widget konverter tidak muncul di SERP untuk query ini; "
-                        "coba google_finance_quote atau google_kurs_bi.")
+        out["error"] = ("Widget konverter tidak muncul di SERP dan fallback "
+                        "finance juga kosong; coba google_kurs_bi untuk kurs "
+                        "resmi BI.")
     return out
 
 
@@ -649,6 +684,17 @@ def google_kurs_bi(currency: str = "", engine: str = "auto") -> dict:
         rendered = _render_fallback(BI_KURS_URL, {}, "id", parse,
                                     "kurs-bi", expect=("Kurs Jual", "USD"))
         out.update(rendered)
+        if not out.get("rates"):
+            # Fallback: coba jalur HTTP polos sebelum menyerah.
+            try:
+                r = fetch(BI_KURS_URL)
+                http_parsed = parse(r.text)
+                if http_parsed.get("rates"):
+                    out.update(http_parsed)
+                    out["engine"] = "http"
+                    out["fallback"] = "http"
+            except Exception:
+                pass
     if not out.get("rates"):
         out["status"] = out.get("status", "ok")
         if out.get("status") == "ok":

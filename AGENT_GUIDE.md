@@ -64,6 +64,9 @@ Useful extra keys:
   browser automatically — no agent action needed.
 - `cached: true` — served from the response cache (TTL 10 minutes).
 - `note` — why `auto` chose a particular path.
+- `fallback` — present when a tool had to use a backup source (e.g.
+  `serp_fx_widget`, `finance_quote`, `web_search`, `http`). The data is still
+  real; the primary source just failed to parse.
 
 Result shapes:
 - Web/video/books: `title`, `url`, `cite`, `site`, `snippet`.
