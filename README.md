@@ -59,7 +59,7 @@ Run `google-scrape-mcp` directly for stdio transport. Agents can call the
 `google_help` tool for a runtime usage guide, or read
 [`AGENT_GUIDE.md`](AGENT_GUIDE.md).
 
-## 4. Tools (20)
+## 4. Tools (22)
 
 | Tool | Source | Notes |
 |---|---|---|
@@ -73,7 +73,9 @@ Run `google-scrape-mcp` directly for stdio transport. Agents can call the
 | `google_scholar_search` | papers, venue, citations, PDF links | browser (HTTP 429) |
 | `google_scholar_cited_by` | Scholar `cites=` | extra protection, often `blocked` and reported as such |
 | `google_patents_search` | Patents XHR JSON | never blocked |
-| `google_finance_quote` | stocks, forex, crypto (`USD-IDR`, `BBCA:IDX`) | never blocked |
+| `google_finance_quote` | stocks, forex, crypto. `USDIDR`, `USD/IDR` are normalized to `USD-IDR`; stocks use ticker + exchange (`BBCA:IDX`) | never blocked |
+| `google_fx_rate` | fast FX from the SERP converter widget (`1 USD to IDR`) | returns `fx_rate {rate, from, to}` |
+| `google_kurs_bi` | official Bank Indonesia transaction rates (sell/buy, 26 currencies) | browser render of the BI table, `currency` filter optional |
 | `google_translate` | unofficial `gtx` endpoint | never blocked |
 | `google_suggest` | autocomplete | never blocked |
 | `google_trends_daily` | Trends RSS | never blocked |

@@ -89,6 +89,9 @@ Result shapes:
 7. **cited_by**: if `blocked`, report it; the `cited_by` count and
    `cited_by_url` from `google_scholar_search` are still usable.
 8. `google_crawl` accepts any http/https URL, not just Google results.
+9. **Kurs**: `google_fx_rate("USD","IDR")` for a quick mid-market number,
+   `google_kurs_bi("USD")` for official BI sell/buy. If a finance page layout
+   changed, `google_finance_quote` reports it explicitly instead of guessing.
 
 ## 5. Example calls
 

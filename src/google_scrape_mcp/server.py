@@ -43,6 +43,8 @@ from .client import (
 from .parsers import (
     parse_ai_mode,
     parse_finance_quote,
+    parse_fx_widget,
+    parse_kurs_bi,
     parse_images,
     parse_news_live,
     parse_news_rss,
@@ -533,11 +535,32 @@ def google_patents_search(query: str, num: int = 10, page: int = 1) -> dict:
 
 
 # -------------------------------------------------------------- finance --
+def _normalize_finance_symbol(ticker: str, exchange: str = "") -> str:
+    """Terima USDIDR, USD/IDR, usd-idr, BBCA + IDX, dll -> simbol kanonik.
+
+    Google Finance memakai 'USD-IDR' untuk forex dan 'BBCA:IDX' untuk saham;
+    'USDIDR' polos adalah kesalahan paling umum dan sebelumnya bikin error.
+    """
+    t = (ticker or "").strip().replace(" ", "").replace("/", "-")
+    if exchange:
+        return t if ":" in t else f"{t}:{exchange.strip()}"
+    if ":" in t:
+        return t
+    up = t.upper()
+    if len(up) == 6 and up.isalpha():
+        return f"{up[:3]}-{up[3:]}"
+    return up
+
+
 @mcp.tool()
 def google_finance_quote(ticker: str, exchange: str = "",
                          hl: str = "en") -> dict:
-    """Scrape Google Finance quote page: price, prev close, day high/low, change."""
-    symbol = f"{ticker}:{exchange}" if exchange else ticker
+    """Scrape Google Finance quote: saham, forex, kripto.
+
+    Ticker: 'BBCA' + exchange 'IDX', 'AAPL' + 'NASDAQ', atau pair forex
+    'USD-IDR' (USDIDR/USD/IDR juga diterima, dinormalisasi otomatis).
+    """
+    symbol = _normalize_finance_symbol(ticker, exchange)
     url = f"https://www.google.com/finance/quote/{urllib.parse.quote(symbol)}?hl={hl}"
     r = fetch(url)
     out = {"status": "ok", "symbol": symbol, "http_status": r.status_code,
@@ -548,9 +571,93 @@ def google_finance_quote(ticker: str, exchange: str = "",
     quote = parse_finance_quote(r.text)
     if not quote:
         out.update({"status": "error",
-                    "error": "Quote data block not found (page layout changed)."})
+                    "error": f"Quote data block not found untuk simbol "
+                             f"'{symbol}'. Pakai format 'USD-IDR' (forex) atau "
+                             f"'BBCA:IDX' / ticker + exchange (saham). "
+                             f"Layout Google Finance bisa berubah; cek "
+                             f"google_fx_rate untuk kurs, atau google_crawl "
+                             f"halaman finance sebagai fallback.",
+                    "symbol_used": symbol,
+                    "url": out.get("url")})
         return out
     out["quote"] = quote
+    return out
+
+
+@mcp.tool()
+def google_fx_rate(base: str = "USD", quote: str = "IDR", amount: float = 1.0,
+                   hl: str = "en", gl: str = "us", engine: str = "auto") -> dict:
+    """Kurs langsung dari widget konverter SERP (mis. "1 USD to IDR").
+
+    Hasil: fx_rate {rate, from, to, formatted} + results biasa. Lebih tahan
+    terhadap perubahan layout daripada halaman finance, karena membaea widget
+    konverter yang muncul di SERP. Cocok untuk kurs cepat; untuk kurs resmi BI
+    pakai google_kurs_bi.
+    """
+    try:
+        amount_txt = f"{float(amount):g}"
+    except (TypeError, ValueError):
+        amount_txt = "1"
+    query = f"{amount_txt} {base.strip().upper()} to {quote.strip().upper()}"
+
+    def parse(html: str):
+        parsed = parse_web(html)
+        fx = parse_fx_widget(html)
+        if fx:
+            parsed["fx_rate"] = fx
+        return parsed
+
+    out = _run_search(SEARCH_BASE, {"q": query, "hl": hl, "gl": gl},
+                      {"q": query, "hl": hl, "gl": gl}, hl, query, engine,
+                      parse, parse, expect=("DFlfde", "<h3"))
+    if out.get("status") == "ok" and not out.get("fx_rate"):
+        out["status"] = "empty"
+        out["error"] = ("Widget konverter tidak muncul di SERP untuk query ini; "
+                        "coba google_finance_quote atau google_kurs_bi.")
+    return out
+
+
+BI_KURS_URL = ("https://www.bi.go.id/id/statistik/informasi-kurs/"
+               "transaksi-bi/default.aspx")
+
+
+@mcp.tool()
+def google_kurs_bi(currency: str = "", engine: str = "auto") -> dict:
+    """Kurs Transaksi Bank Indonesia (Jual/Beli) dari tabel resmi BI.
+
+    currency opsional: 'USD', 'EUR', dst (kosong = semua). Halaman BI
+    JS-heavy, jadi engine auto memakai browser; engine 'http' dicoba dulu
+    sebagai jalur murah.
+    """
+    want = (currency or "").strip().upper()
+
+    def parse(html: str):
+        parsed = parse_kurs_bi(html)
+        if want:
+            parsed["rates"] = [r for r in parsed["rates"]
+                               if r["currency"] == want]
+        return parsed
+
+    out = {"source": "Bank Indonesia (Kurs Transaksi)"}
+    if engine == "http":
+        r = fetch(BI_KURS_URL)
+        parsed = parse(r.text)
+        out.update(parsed)
+        out["engine"] = "http"
+        out["http_status"] = r.status_code
+    else:
+        rendered = _render_fallback(BI_KURS_URL, {}, "id", parse,
+                                    "kurs-bi", expect=("Kurs Jual", "USD"))
+        out.update(rendered)
+    if not out.get("rates"):
+        out["status"] = out.get("status", "ok")
+        if out.get("status") == "ok":
+            out["status"] = "empty"
+            out["error"] = ("Tabel kurs BI tidak ditemukan"
+                            + (f" untuk {want}" if want else "")
+                            + ". Halaman BI kadang berubah struktur.")
+        return out
+    out["status"] = "ok"
     return out
 
 
@@ -886,7 +993,11 @@ TOOL MAP
   google_news_search, google_news_homepage   (RSS, most reliable)
   google_scholar_search (cluster_id, cited_by, pdf_url)
   google_scholar_cited_by (often blocked — report it, don't retry hard)
-  google_patents_search (JSON), google_finance_quote (USD-IDR, BBCA:IDX)
+  google_patents_search (JSON)
+  google_finance_quote  saham/forex/kripto: 'BBCA' + exchange IDX, 'USD-IDR'
+                        (USDIDR / USD/IDR dinormalisasi otomatis)
+  google_fx_rate         kurs cepat dari widget SERP: base, quote, amount
+  google_kurs_bi         kurs resmi BI (Jual/Beli) dari tabel transaksi-bi
   google_translate, google_suggest, google_trends_daily, google_trends_interest
   google_ai_mode       AI Mode (udm=50) synthesized answer + sources
   google_crawl (read any URL)

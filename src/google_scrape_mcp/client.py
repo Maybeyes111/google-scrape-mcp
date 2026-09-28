@@ -404,7 +404,13 @@ def head_location(url: str, timeout: int = 15, light: bool = False) -> str | Non
             _throttle()
         resp = session.head(url, timeout=timeout, allow_redirects=False,
                             cookies=cookies)
-        return resp.headers.get("location")
+        loc = resp.headers.get("location")
+        if not loc:
+            # Google /goto tidak mengirim Location untuk HEAD; GET 302.
+            resp = session.get(url, timeout=timeout, allow_redirects=False,
+                               cookies=cookies)
+            loc = resp.headers.get("location")
+        return loc
 
 
 def is_js_challenge(html: str) -> bool:

@@ -162,6 +162,35 @@ def _resolve_many(gotos: list[str], cap: int = 12) -> dict:
     return out
 
 
+def parse_fx_widget(html: str):
+    """Widget konverter kurs di SERP: span.DFlfde[data-value] + nama mata uang.
+
+    Markup nyata (2026):
+      <span data-name="United States Dollar">United States Dollar</span> equals
+      <div class="dDoNo"><span class="DFlfde SwHCTb" data-value="18035">18,035.00</span>
+      <span class="MWvIVe" data-name="Indonesian Rupiah">Indonesian Rupiah</span></div>
+    """
+    soup = BeautifulSoup(html, "lxml")
+    for span in soup.select("span.DFlfde[data-value]"):
+        try:
+            value = float(span.get("data-value"))
+        except (TypeError, ValueError):
+            continue
+        container = span.find_parent("div", class_="dDoNo") or span.parent
+        to_name = None
+        if container is not None:
+            to_span = container.select_one("span.MWvIVe[data-name]")
+            if to_span is not None:
+                to_name = to_span.get("data-name")
+        from_name = None
+        prev = span.find_previous("span", attrs={"data-name": True})
+        if prev is not None:
+            from_name = prev.get("data-name")
+        return {"rate": value, "from": from_name, "to": to_name,
+                "formatted": span.get_text(strip=True)}
+    return None
+
+
 def _extract_serp_result(h3, base: str, resolve_links: bool):
     """Ambil satu hasil dari sebuah h3 SERP — layout-agnostic.
 
@@ -253,10 +282,15 @@ def parse_serp_live(html: str, base: str = "https://www.google.com",
         for it in results:
             goto = it.pop("_goto", None)
             if goto:
-                it["url"] = resolved.get(goto) or goto
+                # resolve gagal (mis. token kedaluwarsa) -> pakai cite yang
+                # sudah direkonstruksi supaya tidak ada URL /goto opaque.
+                it["url"] = (resolved.get(goto) or reconstruct_url(it.get("cite"))
+                             or goto)
     else:
         for it in results:
-            it.pop("_goto", None)
+            goto = it.pop("_goto", None)
+            if goto:
+                it["url"] = reconstruct_url(it.get("cite")) or goto
     related = []
     for a in soup.find_all("a", href=re.compile(r"/search\?.*q=")):
         txt = a.get_text(" ", strip=True)
@@ -359,9 +393,16 @@ def parse_web(html: str, base: str = "https://www.google.com"):
         # pakai parser markup baru supaya jalur HTTP tetap menghasilkan.
         modern = parse_serp_live(html, base)
         if modern.get("results"):
+            fx = parse_fx_widget(html)
+            if fx:
+                modern["fx_rate"] = fx
             return modern
-    return {"results": results, "related_searches": related,
-            "total_results": total, "featured_snippet": featured}
+    out = {"results": results, "related_searches": related,
+           "total_results": total, "featured_snippet": featured}
+    fx = parse_fx_widget(html)
+    if fx:
+        out["fx_rate"] = fx
+    return out
 
 
 def parse_images(html: str):
@@ -426,6 +467,55 @@ def parse_shopping(html: str):
             "info": info[:300],
         })
     return results
+
+
+def _id_number(text: str):
+    """Angka format Indonesia: '18.006,58' -> 18006.58."""
+    text = (text or "").strip()
+    if not text or not re.search(r"\d", text):
+        return None
+    try:
+        return float(text.replace(".", "").replace(",", "."))
+    except ValueError:
+        return None
+
+
+def parse_kurs_bi(html: str):
+    """Tabel Kurs Transaksi BI: {currency, name, unit, sell, buy}.
+
+    Halaman BI memuat dua tabel: peta kode->nama, dan tabel kurs dengan
+    kolom Mata Uang | Nilai | Kurs Jual | Kurs Beli.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    names: dict[str, str] = {}
+    rates: list[dict] = []
+    for table in soup.find_all("table"):
+        rows = table.find_all("tr")
+        if not rows:
+            continue
+        header = " ".join(c.get_text(" ", strip=True).lower()
+                          for c in rows[0].find_all(["td", "th"]))
+        if "kurs jual" in header:
+            for row in rows[1:]:
+                cells = [re.sub(r"\s+", " ", c.get_text(" ", strip=True))
+                         for c in row.find_all("td")]
+                if len(cells) >= 4 and re.fullmatch(r"[A-Z]{3}", cells[0]):
+                    unit = _id_number(cells[1]) or 1
+                    rates.append({
+                        "currency": cells[0],
+                        "unit": int(unit) if float(unit).is_integer() else unit,
+                        "sell": _id_number(cells[2]),
+                        "buy": _id_number(cells[3]),
+                    })
+        elif "nama mata uang" in header:
+            for row in rows[1:]:
+                cells = [re.sub(r"\s+", " ", c.get_text(" ", strip=True))
+                         for c in row.find_all("td")]
+                if len(cells) >= 2 and re.fullmatch(r"[A-Z]{3}", cells[0]):
+                    names[cells[0]] = cells[1]
+    for rate in rates:
+        rate["name"] = names.get(rate["currency"], "")
+    return {"rates": rates}
 
 
 def parse_news_rss(xml_text: str):
