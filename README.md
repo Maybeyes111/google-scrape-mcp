@@ -148,12 +148,20 @@ Sources, in priority order:
 3. Defaults when present: `~/.config/google-scrape/proxies.txt` and
    `~/.cache/google-scrape-mcp/proxies_curated.txt`.
 
-Failed proxies get a cooldown. Browser fallback only uses proxies that have
-succeeded before, so a dead pool never burns minutes. Curate your own:
+Free lists work here, but only when combined with the bootstrap cookies:
+with fresh cookies, clean proxies pass `/search` (4/8 live proxies in one
+measured run); without them everything gets a JS challenge. `curate` is
+cookie-aware, clears the cookie jar before probing, limits search concurrency
+(session cookies plus parallel IPs looks anomalous), and writes the fastest
+proxies first. From the public hproxy list, 8 of 36 live proxies made it into
+the curated pool.
 
 ```bash
 python3 -m google_scrape_mcp.curate --limit 100 --workers 8
 ```
+
+Failed proxies get a cooldown. Browser fallback only uses proxies that have
+succeeded before, so a dead pool never burns minutes.
 
 ## 9. Environment variables
 

@@ -34,7 +34,8 @@ results: when Google blocks, `status` says so explicitly.
   to the browser (see the `note` in the response).
 - `http` — force direct HTTP (fast, but challenge-prone; avoid when
   `http_blocked.active` is true in `google_status`).
-- `proxy` — force the proxy pool.
+- `proxy` — force the proxy pool (uses bootstrap cookies too, so curated
+  free proxies can return real results; expect ~10s and occasional fallback).
 - `browser` — Camoufox headless render (~5–15s, most "human").
 
 Never set `engine=http` repeatedly when the result is `blocked` — switch to

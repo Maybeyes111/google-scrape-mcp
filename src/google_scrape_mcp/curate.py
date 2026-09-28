@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -28,6 +29,11 @@ from . import client
 from .proxies import Proxy, load_proxies
 
 SUGGEST = "https://suggestqueries.google.com/complete/search"
+# Probe /search dibatasi concurrency-nya: cookie bootstrap bersifat
+# session-bound, menembaknya paralel dari banyak IP sekaligus = anomali
+# instan (semua js_challenge). Real-run kita sekuensial.
+SEARCH_CONC = int(os.environ.get("GOOGLE_SCRAPE_CURATE_SEARCH_CONC", "3"))
+_SEARCH_SEM = threading.Semaphore(SEARCH_CONC)
 SEARCH = "https://www.google.com/search"
 CURATED = Path.home() / ".cache" / "google-scrape-mcp" / "proxies_curated.txt"
 REPORT = Path.home() / ".cache" / "google-scrape-mcp" / "proxy_report.json"
@@ -40,7 +46,7 @@ SEARCH_HEADERS = {
 }
 
 
-def check(proxy: Proxy, timeout: float) -> dict:
+def check(proxy: Proxy, timeout: float, cookies: dict | None = None) -> dict:
     out = {"proxy": proxy.key, "scheme": proxy.scheme, "live": False,
            "suggest": None, "search": None, "kind": None, "ms": 0}
     t0 = time.time()
@@ -57,9 +63,18 @@ def check(proxy: Proxy, timeout: float) -> dict:
         out["error"] = f"{type(exc).__name__}: {str(exc)[:80]}"
         return out
     try:
-        r2 = session.get(SEARCH, params={"q": "proxy check", "hl": "en",
-                                         "gl": "us"},
-                         timeout=timeout, headers=SEARCH_HEADERS)
+        # Buang cookie jar yang ditaruh suggest tadi: cookie lama bentrok
+        # dengan cookie bootstrap dan membuat /search ditolak.
+        try:
+            session.cookies.clear()
+        except Exception:
+            pass
+        with _SEARCH_SEM:
+            r2 = session.get(SEARCH, params={"q": "proxy check", "hl": "en",
+                                             "gl": "us"},
+                             timeout=timeout, headers=SEARCH_HEADERS,
+                             cookies=cookies or None)
+            time.sleep(1.2)  # jeda manusiawi antar probe search
         kind = client.classify_html(r2.text, r2.status_code)
         out["search"] = r2.status_code
         out["kind"] = kind or "ok"
@@ -88,13 +103,23 @@ def main() -> int:
         os.environ["GOOGLE_SCRAPE_PROXY_FILES"] = args.files
         os.environ.pop("GOOGLE_SCRAPE_PROXIES", None)
     proxies = load_proxies()[:args.limit]
+
+    # Cookie bootstrap = kunci: tanpa cookie, /search via proxy selalu
+    # js_challenge. Selalu refresh di awal agar sesi cookie bersih (sesi
+    # yang sudah kebanyakan request akan ditolak walau cookie belum basi).
+    ok = client.refresh_bootstrap()
+    cookies = client.bootstrap_cookies()
+    print(f"bootstrap cookies: {'segar' if ok else 'GAGAL'} "
+          f"({len(cookies)} cookie)", flush=True)
+
     print(f"menguji {len(proxies)} proxy (timeout {args.timeout}s, "
           f"{args.workers} worker)...", flush=True)
 
     results = []
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = {pool.submit(check, p, args.timeout): p for p in proxies}
+        futures = {pool.submit(check, p, args.timeout, cookies): p
+                   for p in proxies}
         for i, fut in enumerate(as_completed(futures), 1):
             res = fut.result()
             results.append(res)
@@ -108,7 +133,10 @@ def main() -> int:
     live = [r for r in results if r["live"] and r.get("kind") != "ok"]
     dead = [r for r in results if not r["live"]]
 
-    chosen = search_ok or live
+    # Curated = hanya proxy yang terbukti lolos /search. Proxy yang cuma
+    # live (suggest ok, search diblok) tidak ditulis supaya pool tidak jadi
+    # ilusi; cukup tercatat di report.
+    chosen = sorted(search_ok, key=lambda r: r.get("ms", 999999))
     CURATED.parent.mkdir(parents=True, exist_ok=True)
     lines = [r["proxy"] for r in chosen]
     CURATED.write_text("\n".join(lines) + ("\n" if lines else ""))
@@ -119,8 +147,8 @@ def main() -> int:
 
     print(f"\nRINGKASAN: search_ok={len(search_ok)} live_tapi_blocked={len(live)} "
           f"dead={len(dead)} | {time.time()-t0:.0f}s")
-    print(f"kurasi ditulis: {CURATED} ({len(chosen)} baris"
-          f"{' — hanya suggest_ok, /search tetap diblokir' if not search_ok and chosen else ''})")
+    print(f"kurasi ditulis: {CURATED} ({len(chosen)} baris)"
+          + ("" if chosen else " — kosong: tidak ada yang lolos /search"))
     print(f"laporan: {args.json}")
     if search_ok:
         print("saran: biarkan pool default membacanya (sudah masuk DEFAULT_FILES).")

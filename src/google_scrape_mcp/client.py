@@ -309,8 +309,10 @@ def fetch(url, params=None, timeout: int = TIMEOUT,
     last_err: Exception | None = None
     for idx, proxy in enumerate(attempts):
         try:
+            # Cookie bootstrap tetap dipakai lewat proxy: temuan riset,
+            # /search via proxy lolos saat cookie segar ditempelkan.
             resp = _do_request(proxy, url, params, timeout, referer, ajax,
-                               cookies=cookies if proxy is None else None)
+                               cookies=cookies)
         except Exception as exc:  # network / TLS / proxy connect failure
             last_err = exc
             if proxy:
