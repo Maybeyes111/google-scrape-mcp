@@ -370,7 +370,7 @@ def classify_html(html: str, status: int | None = None) -> str:
     if ('id="captcha-form"' in html or 'action="/sorry' in html
             or "our systems have detected unusual traffic" in low):
         return "captcha"
-    if "consent.google.com" in low and "<h3" not in html:
+    if _CONSENT_RE.search(low) and "<h3" not in html:
         return "consent"
     if status in RETRY_STATUS:
         return f"http_{status}"
@@ -747,6 +747,9 @@ _load_bootstrap()
 _load_browser_state()
 
 
+_CONSENT_RE = re.compile(r"consent\.google\.com")
+
+
 def is_blocked_page(html: str) -> bool:
     """Deteksi halaman sorry/captcha/consent/shell JS — pakai marker
     struktural, BUKAN substring mentah yang muncul di bundle JS SERP."""
@@ -757,7 +760,7 @@ def is_blocked_page(html: str) -> bool:
         return True
     if "our systems have detected unusual traffic" in low:
         return True
-    if ("consent.google.com" in low or "before you continue to google" in low) \
+    if (_CONSENT_RE.search(low) or "before you continue to google" in low) \
             and "<h3" not in html:
         return True
     return False

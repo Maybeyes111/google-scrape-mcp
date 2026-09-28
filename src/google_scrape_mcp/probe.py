@@ -44,7 +44,9 @@ def _profile_cookies() -> dict:
         con.close()
         out = {}
         for name, value, host in rows:
-            if host.endswith("google.com") or host.endswith("google.co.id"):
+            host = (host or "").lstrip(".").lower()
+            if (host == "google.com" or host.endswith(".google.com")
+                    or host == "google.co.id" or host.endswith(".google.co.id")):
                 out.setdefault(name, value)
         return out
     except Exception:

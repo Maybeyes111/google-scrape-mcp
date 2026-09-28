@@ -46,6 +46,13 @@ _SELFHEAL_COOLDOWN = 1800.0
 
 _CONSENT_SELECTORS = ("#L2AGLb", "#W0wltc", 'button[aria-label="Reject all"]',
                       'button[aria-label="Tolak semua"]')
+_CONSENT_RE = re.compile(r"consent\.google\.com")
+
+
+def _is_google_domain(domain: str) -> bool:
+    domain = (domain or "").lstrip(".").lower()
+    return domain in ("google.com", "google.co.id") or \
+        domain.endswith(".google.com") or domain.endswith(".google.co.id")
 
 
 def _is_challenge(html: str, expect: tuple[str, ...] = ("<h3",)) -> bool:
@@ -254,7 +261,7 @@ def _render_job(browser, full: str, locale: str, timeout_ms: int,
     finally:
         pg.close()
     blocked = ("/sorry/" in final or 'id="captcha-form"' in html
-               or "consent.google.com" in final)
+               or bool(_CONSENT_RE.search(final)))
     challenge = _is_challenge(html, expect)
     if blocked or challenge:
         kind = classify_html(html, status) or ("challenge" if challenge else "blocked")
@@ -319,13 +326,14 @@ def _warm_job(browser) -> dict:
     try:
         for cookie in browser.cookies() or []:
             domain = str(cookie.get("domain") or "")
-            if "google." in domain and cookie.get("name"):
+            if _is_google_domain(domain) and cookie.get("name"):
                 cookies.setdefault(str(cookie["name"]),
                                    str(cookie.get("value") or ""))
     except Exception:
         pass
     blocked = ("/sorry/" in (pg.url if hasattr(pg, "url") else "")
-               or 'id="captcha-form"' in html)
+               or 'id="captcha-form"' in html
+               or bool(_CONSENT_RE.search(pg.url if hasattr(pg, "url") else "")))
     return {"cookies": cookies, "blocked": blocked, "http_status": status}
 
 
@@ -554,7 +562,7 @@ def get_cookies() -> dict:
         out = {}
         for cookie in items or []:
             domain = str(cookie.get("domain") or "")
-            if "google." in domain and cookie.get("name"):
+            if _is_google_domain(domain) and cookie.get("name"):
                 out.setdefault(str(cookie["name"]), str(cookie.get("value") or ""))
         return out
     try:

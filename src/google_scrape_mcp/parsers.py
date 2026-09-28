@@ -5,7 +5,10 @@ import html as ihtml
 import json
 import re
 import urllib.parse
-import xml.etree.ElementTree as ET
+try:  # defusedxml menutup celah XML berbahaya; fallback ke stdlib
+    from defusedxml import ElementTree as ET
+except ImportError:  # pragma: no cover
+    import xml.etree.ElementTree as ET
 
 from bs4 import BeautifulSoup
 
@@ -77,7 +80,7 @@ def resolve_goto(goto_url: str) -> str | None:
 
 
 _AI_PREFIX = re.compile(r"^Disalin\s+Salin\s+Edit\s+")
-_AI_TRAILING = re.compile(r"\s*(?:Dibagikan\s+\d+\s+file.*|Tampilkan draf.*|Salin)+$")
+_AI_TAIL_MARK = re.compile(r"\s*(?:Dibagikan\s+\d+\s+file|Tampilkan draf|Salin\b)")
 _AI_STOP = re.compile(r"\s*(?:Salin link|Tidak dapat menyalin|Gagal menyalin|"
                       r"Disalin ke papan klip|Coba lagi nanti|"
                       r"AI dapat membuat kesalahan|Bagikan|Respons baik|"
@@ -107,7 +110,10 @@ def parse_ai_mode(html: str, query: str = ""):
         m = re.search(r"Balasan Mode AI untuk .{0,300}?(?=[A-Z0-9])", text)
         if m:
             text = text[m.end():]
-    text = _AI_TRAILING.sub("", text).strip()
+    tail = _AI_TAIL_MARK.search(text)
+    if tail:
+        text = text[:tail.start()]
+    text = text.strip()
     stop = _AI_STOP.search(text)
     if stop:
         text = text[:stop.start()]
@@ -308,7 +314,10 @@ def parse_web(html: str, base: str = "https://www.google.com"):
         if a is None:
             a = h3.find("a", href=True)
         url = clean_google_url(a["href"] if a else None)
-        if not url or url in seen or url.startswith("https://support.google.com"):
+        if not url or url in seen:
+            continue
+        host = urllib.parse.urlsplit(url).netloc.lower()
+        if host == "support.google.com" or host.endswith(".support.google.com"):
             continue
         node = h3
         snippet = ""
