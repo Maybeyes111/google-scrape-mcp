@@ -1,5 +1,12 @@
 # google-scrape-mcp
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![CodeQL](https://github.com/Maybeyes111/google-scrape-mcp/actions/workflows/dynamic/github-code-scanning/codeql/badge.svg)](https://github.com/Maybeyes111/google-scrape-mcp/security/code-scanning)
+[![Bandit](https://github.com/Maybeyes111/google-scrape-mcp/actions/workflows/bandit.yml/badge.svg)](https://github.com/Maybeyes111/google-scrape-mcp/actions/workflows/bandit.yml)
+[![Dependabot](https://img.shields.io/badge/dependabot-enabled-brightgreen.svg)](https://github.com/Maybeyes111/google-scrape-mcp/security)
+[![MCP](https://img.shields.io/badge/MCP-server-purple.svg)](https://modelcontextprotocol.io)
+
 MCP server for **Google Search via pure scraping — no API key required**.
 Two engines work together: a fast HTTP path (`curl_cffi` with real Chrome TLS
 impersonation) and a **Camoufox headless browser** fallback that actually runs
