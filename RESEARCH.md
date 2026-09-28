@@ -59,7 +59,7 @@ HTTP `/search` JS challenges.
 2. **Cookies do not replace fingerprint/TLS+IP.** A valid NID does not rescue
    curl_cffi requests.
 3. **Persistent browser + human pacing passes** for web, AI Mode, and scholar.
-   Blocks that appeared during aggressive testing **decayed on their own**
+   Blocks that appear under aggressive traffic tend to **decay on their own**
    once traffic stopped — consistent with rate limiting, not a ban.
 4. **RSS/JSON surfaces are stable**: suggest, news, patents, trends, finance,
    translate. These are the most reliable path for agents.
