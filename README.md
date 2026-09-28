@@ -9,16 +9,16 @@
 
 ![google-scrape-mcp](assets/banner.png)
 
-MCP server that gives AI agents real Google results with no API key: a measured
-HTTP fast path (0.3–2.9s searches), a Camoufox browser fallback that actually
+MCP server that gives AI agents real Google results with no API key: an HTTP
+fast path (0.3–2.9s searches when cookies are warm), a Camoufox browser fallback that actually
 runs the JS challenges, adaptive cooldowns derived from probing, and honest
 status codes instead of fabricated results.
 
 ![live demo](assets/demo.gif)
 
 Full-quality recording: [`assets/demo_real.mp4`](assets/demo_real.mp4) (24s).
-Every number in that recording is from a real run: web 1.1s, images 0.8s,
-scholar 7.1s, AI Mode 9.2s (2,548 chars), USD/IDR quote 0.5s.
+What you see in the recording: web 1.1s, images 0.8s, scholar 7.1s,
+AI Mode 9.2s (2,548 chars), USD/IDR quote 0.5s.
 
 ## 1. What it does
 
@@ -48,7 +48,7 @@ Platform support, honestly:
 | Component | Platforms | Notes |
 |---|---|---|
 | HTTP engine (`curl_cffi`) | Linux, macOS, Windows (x86_64 wheels; arm64 where published) | no browser needed |
-| Browser engine (`camoufox`) | **Linux x86_64 (tested here)**; upstream also ships macOS (Intel/Apple Silicon) and Windows x86_64 builds | ~660 MB download; **ARM Linux and Android are untested** and will likely need manual builds. If that is your target, use the HTTP engine only and expect more `blocked` responses |
+| Browser engine (`camoufox`) | Linux x86_64; upstream also ships macOS (Intel/Apple Silicon) and Windows x86_64 builds | ~660 MB download; **ARM Linux and Android are not supported by upstream builds** and need manual work. On those targets use the HTTP engine only and expect more `blocked` responses |
 
 ## 3. MCP client config
 
@@ -109,10 +109,9 @@ shopping. Scholar (HTTP 429) and AI Mode (answer is streamed by JS) stay on
 the browser. Cookies are cached for 5 minutes and refreshed in the background
 while tools are in use, so searches rarely pay the warm-up cost.
 
-Findings behind this are documented with measurements in
-[`RESEARCH.md`](RESEARCH.md).
+Behavior notes behind this are in [`RESEARCH.md`](RESEARCH.md).
 
-## 6. Performance (measured)
+## 6. Performance
 
 | Operation | Before | Now |
 |---|---|---|
@@ -157,13 +156,11 @@ Sources, in priority order:
 3. Defaults when present: `~/.config/google-scrape/proxies.txt` and
    `~/.cache/google-scrape-mcp/proxies_curated.txt`.
 
-Free lists work here, but only when combined with the bootstrap cookies:
-with fresh cookies, clean proxies pass `/search` (4/8 live proxies in one
-measured run); without them everything gets a JS challenge. `curate` is
-cookie-aware, clears the cookie jar before probing, limits search concurrency
-(session cookies plus parallel IPs looks anomalous), and writes the fastest
-proxies first. From the public hproxy list, 8 of 36 live proxies made it into
-the curated pool.
+Free lists can work here, but only when combined with the bootstrap
+cookies: with fresh cookies, clean proxies can pass `/search`; without them
+everything gets a JS challenge. `curate` is cookie-aware, clears the cookie
+jar before probing, limits search concurrency (session cookies plus parallel
+IPs looks anomalous), and writes the fastest proxies first.
 
 ```bash
 python3 -m google_scrape_mcp.curate --limit 100 --workers 8
@@ -213,12 +210,12 @@ src/google_scrape_mcp/
   parsers.py     SERP/RSS/JSON parsing, AI Mode cleanup, shopping cards
   proxies.py     proxy pool: parsing, rotation, cooldowns, proven-only usage
   forensics.py   block taxonomy samples and counters
-  probe.py       research harness (block measurement)
+  probe.py       block-monitoring harness
   curate.py      proxy curation (liveness + /search capability)
 ```
 
 Docs: [`AGENT_GUIDE.md`](AGENT_GUIDE.md) for agents,
-[`RESEARCH.md`](RESEARCH.md) for the anti-block measurements.
+[`RESEARCH.md`](RESEARCH.md) for the anti-block notes.
 
 ## 12. Known limitations
 
@@ -232,20 +229,19 @@ Docs: [`AGENT_GUIDE.md`](AGENT_GUIDE.md) for agents,
 ## 13. Reliability: this is a cat-and-mouse game
 
 This is an unofficial scraper fighting Google's bot detection. Pretending
-otherwise would be dishonest. What we measured (see `RESEARCH.md`):
+otherwise would be dishonest. Expect the following:
 
-- Raw HTTP `/search` from a flagged IP is **always** challenged; the fast path
-  only works because fresh browser cookies are attached. Browser profiles can
-  burn out (`profile burnout`), and they get rotated, but sustained volume
-  without good proxies will hit `blocked` regularly.
-- Proxies help, but free/datacenter pools are mostly dead or rejected: one
-  public list yielded **8 usable proxies out of 36 live** ones.
+- Raw HTTP `/search` from a flagged IP is challenged almost every time; the
+  fast path exists because fresh browser cookies are attached. Browser
+  profiles can burn out, and they get rotated, but sustained volume without
+  good proxies will hit `blocked` regularly.
+- Free and datacenter proxy pools are mostly dead or rejected. Residential
+  proxies work better and cost money.
 - Browser sessions are heavy (hundreds of MB, 5-15s per render) and need the
   Camoufox binary; the fast path exists precisely to avoid them when possible.
 - RSS/JSON surfaces (news, patents, trends, suggest, translate, finance
   quotes) are the stable part. Search surfaces are the fragile part.
-- All numbers here come from measurements on one residential IP. IP
-  reputation, region and hour change everything.
+- Results vary with IP reputation, region and time of day.
 
 If you need guaranteed, stable Google results, use an official API. This
 project trades that stability for zero cost and no key.

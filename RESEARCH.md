@@ -1,8 +1,7 @@
 # Fighting Google's Blocks — Research Notes
 
-This document records the methodology, measurements, and the policies derived
-from them. Everything here comes from **measured probes** on a real machine,
-not guesses.
+This document records the behaviour patterns behind the anti-block policies. Notes on Google's blocking behaviour and the countermeasures used by this
+server.
 
 ## 1. Method
 
@@ -15,25 +14,25 @@ not guesses.
   runs an endpoint/engine matrix with human-like spacing (default 8s,
   jittered 0.7–1.3×), printing a table + JSON.
 
-Methodology lesson #1: raw substring classification is dangerous. The string
+Lesson #1: raw substring classification is dangerous. The string
 `"/sorry/index"` appears **6 times** inside a normal SERP's JS bundle (Google's
 anti-bot JS literally checks `indexOf("/sorry/index")`). Classification must
 use structural markers: `action="/sorry`, `id="captcha-form"`, or the visible
 phrase "our systems have detected unusual traffic".
 
-Methodology lesson #2: never trust a status without a sample. A filename bug
+Lesson #2: never trust a status without a sample. A filename bug
 (endpoints contain `/`) silently dropped forensic samples; once fixed,
 ground truth proved a 1.7 MB page with 10 `<h3>` results was a normal SERP
 that had been misreported as `captcha`.
 
-Methodology lesson #3: size guards matter. The "enable JavaScript" shell is
+Lesson #3: size guards matter. The "enable JavaScript" shell is
 only ~90–100 KB; result pages without `<h3>` (images/shopping/AI Mode) were
 being misclassified as challenges until a `len(html) < 250_000` guard was
 added.
 
-## 2. Probe data (quick run, 12 probes, 8s spacing)
+## 2. Observed behaviour
 
-| Probe | Engine | Result | Note |
+| Surface | Engine | Result | Note |
 |---|---|---|---|
 | suggest | HTTP | ok 262ms | RSS/JSON, never blocked |
 | news RSS | HTTP | ok 532ms | never blocked |
@@ -48,7 +47,8 @@ added.
 | **AI Mode (udm=50)** | browser | **ok** 1.9 MB | 6.9s |
 | scholar search | browser | **ok** 177 KB | 4.6s |
 
-Summary: **9 ok, 3 js_challenge** — all blocks were HTTP-only.
+Summary: the RSS/JSON surfaces never blocked; the only blocks observed were
+HTTP `/search` JS challenges.
 
 ## 3. Key findings
 
@@ -72,22 +72,22 @@ Summary: **9 ok, 3 js_challenge** — all blocks were HTTP-only.
 
 Further experiments found a legitimate fast path:
 
-1. **A homepage warm-up alone** (open `google.com` in the persistent browser,
+1. **A homepage warm-up alone** (open `google.com` in a persistent browser,
    no SERP render) mints fresh session cookies (`NID`, `AEC`, `SNID`, `GSP`,
    `DV`, `SEARCH_SAMESITE`, `__Secure-STRP`).
 2. HTTP `/search` **with those cookies** → `ok`, 0.4–0.6s, full SERP
-   (h3=8–10). Valid for ≥2 minutes and **portable across sessions/processes**.
+   (h3=8–10). Practically, they last a few minutes and are portable across sessions.
 3. The key is not just the cookies: navigation metadata must be coherent
    (`Referer: google.com` + `Sec-Fetch-Site: same-origin`), and the **session
    jar must be clean** — a warmed-up session carries older cookies that
-   conflict and cause rejection (test: warm session + bootstrap cookies =
-   js_challenge; clean session + bootstrap cookies = ok).
+   conflict and cause rejection (a warm session with bootstrap cookies gets js_challenge; a clean session
+   passes).
 4. Surfaces that pass the fast path: **plain web, `tbm=vid`, `tbm=bks`,
    `tbm=isch`, `tbm=shop`**. Scholar HTTP = 429 (stays on browser). AI Mode
    HTTP only contains the question bubble (the answer is streamed via JS) →
    stays on browser. The News tab HTTP page is parseable, but RSS is cheaper.
-5. Measured after integration: web 0.3–0.7s, images 0.9–1.6s, video/books
-   1.4–2.9s — versus 5–15s for a full browser render. Bootstrap cookies are
+5. Typical results: web 0.3–0.7s, images 0.9–1.6s, video/books 1.4–2.9s,
+   versus 5–15s for a full browser render. Bootstrap cookies are
    cached in `bootstrap_cookies.json` with a 5-minute TTL
    (`GOOGLE_SCRAPE_COOKIE_TTL`).
 
@@ -98,10 +98,9 @@ and send only that surface to the browser.
 
 ## 3c. Burned browser profile → identity rotation
 
-After a long test session, the same persistent profile started being rejected
-continuously (browser render blocked even after a 5-minute rest). Test: move
-the profile away → a fresh profile passes immediately (search h3=8, 477 KB).
-So blocks can stick to a **profile identity**, not only to the IP.
+A persistent profile can eventually start being rejected continuously. A
+fresh profile passes immediately, so blocks can stick to a **profile
+identity**, not only to the IP.
 
 Policy: `note_browser_blocked` at level ≥ 2 (consecutive blocks within an
 hour) triggers `rotate_profile()`: the persistent browser is closed, the old
@@ -125,11 +124,11 @@ cooldown expires.
 - **Cookie bootstrap fast path** for supported surfaces (see 3b).
 - **Profile rotation + browser cooldown** (see 3c).
 - **Forensics**: block samples + counters exposed via `google_status`.
-- **Probe harness** for continuous measurement.
+- **Probe harness** for block monitoring.
 
 ## 4b. Speed work (v0.8.0)
 
-Measured before → after on the same machine:
+Sebelum → sesudah:
 
 | Operation | Before | After |
 |---|---|---|
@@ -163,11 +162,10 @@ over HTTP and returned only the question bubble.
 1. **Residential proxy curation**: run `curate` against a good residential
    pool and re-measure `search_proxy_http`; a clean proxy could revive the
    low-latency HTTP path without the browser.
-2. **Decay measurement**: how long do browser blocks take to clear after a
-   captcha (repeat probes with 5/15/30-minute gaps).
-3. **TLS target experiments**: newer impersonation targets were tested
-   (`chrome142/150`) and made no difference for raw HTTP; re-test if Google's
-   detection changes.
+2. **Decay**: how long browser blocks take to clear (probes with 5/15/30
+   minute gaps).
+3. **TLS targets**: newer impersonation targets (`chrome142/150`) behave the
+   same for raw HTTP; re-check if detection changes.
 4. **Parameter replay**: `ei`/`sei`, `iflsig`, `mstk` replay is already used by
    the fast path; explore page-context conversation replays next.
 5. **Per-surface profiles**: measure whether AI Mode benefits from a profile
